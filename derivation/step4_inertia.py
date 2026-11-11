@@ -11,7 +11,7 @@ Ixx, Iyy, Izz = sp.symbols('I_xx I_yy I_zz', positive=True)
 I_body = sp.diag(Ixx, Iyy, Izz)
 
 # Exact world-frame inertia (Eq. 14)
-I_world = R * I_body * R.T
+I_world = R * I_body * R.T # Robotics Spong Eq. 6.43 (same assumptions applied here)
 
 # Small-angle version (Eq. 15)
 I_hat = sp.simplify(Rz(psi) * I_body * Rz(psi).T)

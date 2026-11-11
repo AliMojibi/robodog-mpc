@@ -13,8 +13,9 @@ dphi, dtheta, dpsi = sp.symbols('phi_dot theta_dot psi_dot', real=True)
 R_dot = R.diff(phi) * dphi + R.diff(theta) * dtheta + R.diff(psi) * dpsi
 
 # 2) R_dot * R^T must be skew-symmetric  (S + S^T = 0)
-S = sp.simplify(R_dot * R.T)
-
+S = sp.simplify(R_dot * R.T) # based on Eq. 6.135 Robotics Spong 1st edition
+print("here is S matrix: \n")
+sp.pprint(S)
 # 3) Read omega off the skew matrix:  S = [[0,-wz,wy],[wz,0,-wx],[-wy,wx,0]]
 omega = sp.Matrix([S[2, 1], S[0, 2], S[1, 0]])
 
@@ -34,3 +35,5 @@ if __name__ == '__main__':
     sp.pprint(E)
     print("\nE - E_paper (Eq. 9) =")
     sp.pprint(sp.simplify(E - E_paper))
+    print("inverse of E = (Eq/ 10)")
+    sp.pprint(E.inv().simplify())

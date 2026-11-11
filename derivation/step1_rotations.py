@@ -40,3 +40,12 @@ if __name__ == '__main__':
     sp.pprint(R)
     # A rotation matrix must satisfy R * R^T = I
     print("\nR * R^T simplifies to identity:", sp.simplify(R * R.T) == sp.eye(3))
+    
+    e_theta = Rz(psi) * sp.Matrix([[0], [1], [0]])
+    e_phi = (Rz(psi)* Ry(theta)) * sp.Matrix([[1], [0], [0]])
+    e_psi = sp.Matrix([[0], [0], [1]])
+
+    mat = sp.Matrix.hstack(e_phi, e_theta, e_psi)
+
+
+    

@@ -23,7 +23,6 @@ x = sp.Matrix.vstack(Theta, p, omega, v)
 feet = ['FR', 'FL', 'RR', 'RL']
 f = [sp.Matrix(sp.symbols(f'f_{n}_x f_{n}_y f_{n}_z', real=True)) for n in feet]
 u = sp.Matrix.vstack(*f)
-
 # ---------------- parameters ----------------
 p_foot = [sp.Matrix(sp.symbols(f'pf_{n}_x pf_{n}_y pf_{n}_z', real=True)) for n in feet]
 m, g0 = sp.symbols('m g_0', positive=True)
@@ -55,8 +54,14 @@ if __name__ == '__main__':
     print("\n--- v_dot ---")
     sp.pprint(v_dot)
 
-    print("\n--- omega_dot = I_hat^-1 * tau,  torque of ONE foot (FR) = (p_foot - p) x f ---")
+    print("\n--- omega_dot = I_hat^-1 * (tau_FR + tau_FL + tau_RR + tau_RL) ---")
+    print("Only ONE of the four torque terms is printed here (FR), NOT omega_dot itself:")
+    print("tau_FR = (p_foot_FR - p) x f_FR =")
     sp.pprint(r[0].cross(f[0]))
+    
+    sp.pprint(I_hat_inv)
+    
+    sp.pprint(sp.simplify(I_hat_inv * r[0].cross(f[0])))
 
     n_ops = sp.count_ops(omega_dot)
     print(f"\n(omega_dot fully expanded has {n_ops} operations, too long to print usefully)")
