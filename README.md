@@ -22,6 +22,8 @@ Step-by-step SymPy scripts following Section III of the paper:
 | 5 | `step5_equations_of_motion.py` | Eqs. 5–7, 13 | Full 12-state model `ẋ = f(x, u)` |
 | 6 | `step6_matrix_form.py` | Eqs. 16–17 | Same model in matrix form, standing check |
 | 7 | `step7_casadi_model.py` | — | Model in CasADi (`f_dyn(x, u, P)`), verified against SymPy |
+| 8 | `step8_constraints.py` | Eqs. 20–24 | Contact-scaled `f_z` bounds, friction pyramid `D u ≤ 0` |
+| 9 | `step9_cost.py` | Eq. 18 | Least-squares cost: heading-frame velocity, yaw rate, height, roll/pitch, forces |
 
 **Model** (state `x = [Θ, p, ω, v]`, input `u = [f_FR, f_FL, f_RR, f_RL]`, world frame):
 
