@@ -21,6 +21,7 @@ Step-by-step SymPy scripts following Section III of the paper:
 | 4 | `step4_inertia.py`, `step4b_check_inertia.py` | Eqs. 14–15 | World-frame inertia `Î = Rz ᴮI Rzᵀ` |
 | 5 | `step5_equations_of_motion.py` | Eqs. 5–7, 13 | Full 12-state model `ẋ = f(x, u)` |
 | 6 | `step6_matrix_form.py` | Eqs. 16–17 | Same model in matrix form, standing check |
+| 7 | `step7_casadi_model.py` | — | Model in CasADi (`f_dyn(x, u, P)`), verified against SymPy |
 
 **Model** (state `x = [Θ, p, ω, v]`, input `u = [f_FR, f_FL, f_RR, f_RL]`, world frame):
 
@@ -40,7 +41,7 @@ v̇ = Σᵢ fᵢ / m + g,   g = [0, 0, −9.81]ᵀ
 
 ```bash
 python3 -m venv ~/.venvs/robodog
-~/.venvs/robodog/bin/pip install sympy
+~/.venvs/robodog/bin/pip install sympy casadi
 cd derivation
 ~/.venvs/robodog/bin/python step6_matrix_form.py
 ```
