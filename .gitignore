@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Licensed / third-party reference documents (kept local only)
+references/*.pdf
+
+# Earlier all-in-one notebook (kept local only)
+notebooks/srbd_derivation.ipynb
+.ipynb_checkpoints/
