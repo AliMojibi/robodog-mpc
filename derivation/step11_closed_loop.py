@@ -9,22 +9,30 @@ i.e. finer than the MPC's own prediction (1 RK4 step per DT). No swing-leg contr
 a swing foot has zero force, so where it is during swing does not matter; at touchdown it is
 simply placed at its new foothold.
 
-Scenario (5 s):  0.0-0.5 s stand  |  0.5-1.0 s trot in place  |  1.0-5.0 s trot forward, v_x = 0.5 m/s
+Scenario (7 s), see SCENARIO below:
+    stand | trot in place | trot forward 0.5 m/s | forward + turn 0.6 rad/s | forward on the new heading
 """
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')                        # no display in WSL: save the figure to a PNG
-import matplotlib.pyplot as plt
+from utils import plots                       # plotting helpers (derivation/utils/plots.py)
 
 from step7_casadi_model import f_dyn, G0
-from step8_constraints import u_bounds, cone_fun, MU
+from step8_constraints import u_bounds, cone_fun, MU, F_MIN, F_MAX, N_POLY
 from step9_cost import make_y_ref
 from step10_acados_ocp import build_solver, N, DT, MASS, INERTIA, HIPS, Z_DES, IDX_FZ, NY_E, FEET
 
 # ---------------- scenario ----------------
-T_SIM = 5.0                                  # simulated time [s] (200 control steps -> 200 solve times)
-N_SIM = int(round(T_SIM / DT))               # 100 control steps
-T_TROT, T_FWD, VX_CMD = 0.5, 1.0, 0.5        # trot starts at 0.5 s; forward command from 1.0 s
+# One row per phase: (start time [s], v_x, v_y, yaw rate, label). Commands are in the HEADING frame
+# (v_x = forward, v_y = left), as in the task interface. The gait (stand -> trot) starts at T_TROT.
+SCENARIO = [
+    (0.0, 0.0, 0.0, 0.0, 'stand'),
+    (0.5, 0.0, 0.0, 0.0, 'trot in place'),
+    (1.5, 0.5, 0.0, 0.0, 'forward'),
+    (3.5, 0.5, 0.0, 0.6, 'forward + turn'),
+    (5.5, 0.5, 0.0, 0.0, 'forward, new heading'),
+]
+T_SIM = 7.0                                  # simulated time [s]
+N_SIM = int(round(T_SIM / DT))               # 280 control steps
+T_TROT = 0.5                                 # trot starts at 0.5 s (before that: all feet down)
 PHASE = 4                                    # control steps per trot half-cycle (4 x 25 ms = 0.1 s)
 T_STANCE = PHASE * DT                        # stance duration of one foot [s]
 J_TROT = int(round(T_TROT / DT))             # control step at which the trot starts
@@ -40,9 +48,15 @@ def contact_at(j):
     return PAIR_A if ((j - J_TROT) // PHASE) % 2 == 0 else PAIR_B
 
 
+def phase_at(j):
+    """Index of the SCENARIO row active at control step j."""
+    t = j * DT
+    return max(r for r, row in enumerate(SCENARIO) if row[0] <= t + 1e-9)
+
+
 def command_at(j):
     """Operator command (vx, vy, yaw_rate) in the heading frame at control step j."""
-    return (VX_CMD if j * DT >= T_FWD else 0.0, 0.0, 0.0)
+    return SCENARIO[phase_at(j)][1:4]
 
 
 def Rz2(yaw):
@@ -75,9 +89,13 @@ def horizon_feet(i, x, stance_pos):
             if s == i:                       # current stance -> fixed position
                 feet[k, leg] = stance_pos[leg]
             else:                            # future stance -> predict where the body will be
-                v_ref = Rz2(x[2]) @ np.array(command_at(s)[:2])     # command in world frame
-                com_pred = x[3:5] + v_ref * (s - i) * DT
-                feet[k, leg] = foothold(com_pred, x[2], v_ref, leg)
+                com_pred, yaw_pred = x[3:5].copy(), x[2]
+                for m in range(i, s):        # follow the commanded (possibly turning) path
+                    vx, vy, wz = command_at(m)
+                    com_pred = com_pred + Rz2(yaw_pred) @ np.array([vx, vy]) * DT
+                    yaw_pred += wz * DT
+                v_ref = Rz2(yaw_pred) @ np.array(command_at(s)[:2])  # command in world frame
+                feet[k, leg] = foothold(com_pred, yaw_pred, v_ref, leg)
     return feet
 
 
@@ -137,6 +155,7 @@ if __name__ == '__main__':
     stance_pos = np.array([foothold(x[3:5], 0.0, np.zeros(2), leg) for leg in range(4)])
 
     log_x, log_u, log_t, log_status = [x.copy()], [], [], []
+    log_feet, log_c = [], []
     for i in range(N_SIM):
         # touchdown: a foot that just landed gets its new foothold (from the measured state)
         for leg in range(4):
@@ -147,16 +166,18 @@ if __name__ == '__main__':
         x = plant_step(x, u0, stance_pos)
 
         log_x.append(x.copy()); log_u.append(u0); log_t.append(t_ms); log_status.append(status)
+        log_feet.append(stance_pos.copy()); log_c.append(contact_at(i))
 
     X, U, T = np.array(log_x), np.array(log_u), np.array(log_t)
+    FEET_POS, C = np.array(log_feet), np.array(log_c)
     time = np.arange(N_SIM + 1) * DT
 
     # ---------------- summary ----------------
-    fwd = time[:-1] >= T_SIM - 0.5            # last 0.5 s, steady forward trot
+    CMD = np.array([command_at(i) for i in range(N_SIM)])          # (N_SIM x 3) commands
+    VH = np.array([Rz2(X[i, 2]).T @ X[i, 9:11] for i in range(N_SIM + 1)])   # heading-frame v
     trot = time[:-1] >= T_TROT
     used, swing_f = 0.0, 0.0
     for i in range(N_SIM):
-        h = cone_fun(U[i], MU).full().ravel()
         for leg, c in enumerate(contact_at(i)):
             f = U[i, 3*leg:3*leg+3]
             if c:
@@ -167,49 +188,36 @@ if __name__ == '__main__':
     print(f"solver status != 0      : {sum(s != 0 for s in log_status)} of {N_SIM} steps")
     print(f"solve time per step     : median {np.median(T):.2f} ms, max {T.max():.2f} ms "
           f"(budget {1000*DT:.0f} ms)")
-    print(f"v_x, last 0.5 s         : mean {X[1:][fwd, 9].mean():.3f} m/s (command {VX_CMD}), "
-          f"std {X[1:][fwd, 9].std():.3f}")
-    print(f"v_y, last 0.5 s         : mean {X[1:][fwd, 10].mean():.3f} m/s (command 0)")
+    print("tracking per phase (second half of each phase; heading frame):")
+    print(f"  {'phase':<22} {'v_x':>13} {'v_y':>13} {'yaw rate':>15}")
+    for r, (t0, vx, vy, wz, label) in enumerate(SCENARIO):
+        t1 = SCENARIO[r + 1][0] if r + 1 < len(SCENARIO) else T_SIM
+        sel = (time[:-1] >= (t0 + t1) / 2) & (time[:-1] < t1)
+        print(f"  {label:<22} {VH[:-1][sel, 0].mean():6.3f} ({vx:4.2f}) {VH[:-1][sel, 1].mean():6.3f} ({vy:4.2f})"
+              f" {X[:-1][sel, 8].mean():7.3f} ({wz:4.2f})")
     print(f"height during trot      : {X[1:][trot, 5].min():.3f} .. {X[1:][trot, 5].max():.3f} m "
           f"(target {Z_DES})")
     print(f"max |roll|, |pitch|     : {np.degrees(np.abs(X[:, 0]).max()):.2f} deg, "
           f"{np.degrees(np.abs(X[:, 1]).max()):.2f} deg")
-    print(f"yaw drift at the end    : {np.degrees(X[-1, 2]):.2f} deg")
+    print(f"total heading change    : {np.degrees(X[-1, 2]):.1f} deg "
+          f"(commanded {np.degrees(np.sum(CMD[:, 2]) * DT):.1f} deg)")
     print(f"applied forces          : max |f_t|/f_z = {used:.3f} (mu = {MU}), "
           f"max |f| of a swing foot = {swing_f:.2e} N")
 
-    # ---------------- plot ----------------
-    fig, ax = plt.subplots(5, 1, figsize=(9, 11), sharex=True)
-    ax[0].plot(time, X[:, 9], label='v_x'); ax[0].plot(time, X[:, 10], label='v_y')
-    ax[0].plot(time[:-1], [command_at(i)[0] for i in range(N_SIM)], 'k--', label='v_x command')
-    ax[0].set_ylabel('velocity [m/s]'); ax[0].legend(loc='upper left')
-    ax[1].plot(time, X[:, 5]); ax[1].axhline(Z_DES, color='k', ls='--')
-    ax[1].set_ylabel('height z [m]')
-    ax[2].plot(time, np.degrees(X[:, 0]), label='roll'); ax[2].plot(time, np.degrees(X[:, 1]), label='pitch')
-    ax[2].plot(time, np.degrees(X[:, 2]), label='yaw'); ax[2].set_ylabel('angle [deg]'); ax[2].legend(loc='upper left')
-    for leg in range(4):
-        ax[3].step(time[:-1], U[:, IDX_FZ[leg]], where='post', label=FEET[leg])
-    ax[3].set_ylabel('f_z [N]'); ax[3].legend(loc='upper left', ncol=4)
-    ax[4].plot(time[:-1], T); ax[4].set_ylabel('solve time [ms]'); ax[4].set_xlabel('time [s]')
-    for a in ax:
-        a.axvline(T_TROT, color='gray', lw=0.8); a.axvline(T_FWD, color='gray', lw=0.8); a.grid(alpha=0.3)
-    fig.suptitle('Step 11: closed loop (SQP_RTI, 16-gon friction)  |  stand / trot in place / trot forward')
-    fig.tight_layout()
-    fig.savefig('step11_closed_loop.png', dpi=90)
-    print("stored figure in step11_closed_loop.png")
+    print(f"solve time distribution : min {T.min():.2f}, median {np.median(T):.2f}, "
+          f"95% {np.percentile(T, 95):.2f}, 99% {np.percentile(T, 99):.2f}, max {T.max():.2f} ms")
 
-    # ---------------- solve-time distribution (like Fig. 4 of the paper) ----------------
-    # time_tot from acados = time of the C solver only (linearization + QP), one SQP_RTI iteration
-    p50, p95, p99 = np.percentile(T, [50, 95, 99])
-    print(f"\nsolve time distribution over {N_SIM} MPC solves: "
-          f"min {T.min():.2f}, median {p50:.2f}, 95% {p95:.2f}, 99% {p99:.2f}, max {T.max():.2f} ms")
-    fig2, ax2 = plt.subplots(figsize=(6, 4))
-    ax2.hist(T, bins=np.arange(0, np.ceil(p99) + 0.25, 0.25), color='tab:blue', edgecolor='black')
-    if T.max() > np.ceil(p99):
-        ax2.text(0.98, 0.95, f'{(T > np.ceil(p99)).sum()} solve(s) above {np.ceil(p99):.0f} ms\n(max {T.max():.1f} ms)',
-                 transform=ax2.transAxes, ha='right', va='top', fontsize=9)
-    ax2.set_xlabel('Solve Time (ms)'); ax2.set_ylabel('Frequency')
-    ax2.set_title(f'Solve Time (SQP_RTI, N = {N}, {N_SIM} solves)')
-    fig2.tight_layout()
-    fig2.savefig('step11_solve_time.png', dpi=90)
-    print("stored figure in step11_solve_time.png")
+    # ---------------- plots (utils/plots.py) ----------------
+    events = [row[0] for row in SCENARIO[1:]]                     # phase changes
+    # save the run for other tools (e.g. showcase/render_3d.py); *.npz is gitignored
+    np.savez('step11_results.npz', time=time, X=X, U=U, C=C, FEET_POS=FEET_POS, T=T,
+             cmd=CMD, vx_cmd=CMD[:, 0], hips=HIPS, dt=DT, mass=MASS, z_des=Z_DES)
+    print("stored results in step11_results.npz")
+    plots.plot_overview(time, X, U, T, CMD, Z_DES, events,
+                        'Step 11: closed loop (SQP_RTI, 16-gon friction) | stand / trot / forward / turn',
+                        'step11_closed_loop.png')
+    plots.plot_foot_forces(time, U, C, MU, F_MIN, F_MAX, events, 'step11_foot_forces.png', n_poly=N_POLY)
+    plots.plot_foot_forces(time, U, C, MU, F_MIN, F_MAX, events, 'step11_foot_forces_zoom.png',
+                           n_poly=N_POLY, t_window=(0.4, 1.6))
+    plots.animate_robot(X, U, C, FEET_POS, HIPS, DT, MASS, 'step11_animation.gif', cmd=CMD[:, 0])
+    plots.plot_solve_time_histogram(T, N, 'step11_solve_time.png')

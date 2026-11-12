@@ -9,6 +9,12 @@ Nonlinear MPC for quadruped locomotion based on the Single Rigid Body Dynamics (
 The paper freezes yaw and the foot lever arms to get a linear (convex) MPC. We keep the same
 model but leave those as functions of the state, which makes it nonlinear and suitable for NMPC.
 
+![Closed-loop NMPC: stand, trot, forward, turn](showcase/robodog_nmpc.gif)
+
+*Closed-loop simulation (step 11): stand → trot in place → trot forward at 0.5 m/s → turn at 0.6 rad/s.
+Orange arrows are the ground reaction forces computed by the NMPC. The legs are for display only;
+the controller uses the single-rigid-body model.*
+
 ## Derivation (`derivation/`)
 
 Step-by-step SymPy scripts following Section III of the paper:
@@ -61,7 +67,8 @@ Tested versions:
 | NumPy | 2.2.6 | |
 | CasADi | **3.7.2** | pinned to 3.7.x: the range acados v0.6.0 is tested with (3.8 gives a warning) |
 | acados | **v0.6.0** | built from source with qpOASES; HPIPM is the QP solver used |
-| SciPy / Matplotlib | 1.15.3 / 3.10.9 | pendulum example only |
+| SciPy / Matplotlib | 1.15.3 / 3.10.9 | plots, pendulum example |
+| imageio-ffmpeg | 0.8.1 | bundled ffmpeg for the showcase video |
 | ROS 2 | Humble | C++ package (planned) |
 
 ## Running
@@ -89,4 +96,13 @@ cmake -DACADOS_WITH_QPOASES=ON .. && make install -j$(nproc)
 export ACADOS_SOURCE_DIR=$HOME/acados
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/acados/lib
 ~/.venvs/robodog/bin/python step10_acados_ocp.py
+```
+
+## Showcase animation
+
+`showcase/render_3d.py` renders the closed-loop run of step 11 in 3D (MP4 1280×720 + a small GIF):
+
+```bash
+cd derivation && ~/.venvs/robodog/bin/python step11_closed_loop.py   # writes step11_results.npz
+cd .. && ~/.venvs/robodog/bin/python showcase/render_3d.py            # writes showcase/robodog_nmpc.{mp4,gif}
 ```

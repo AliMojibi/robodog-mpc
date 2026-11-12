@@ -15,3 +15,10 @@ acados_sim*.json
 # Earlier all-in-one notebook (kept local only)
 notebooks/srbd_derivation.ipynb
 .ipynb_checkpoints/
+
+# simulation results
+*.npz
+
+# showcase video (kept local; the README uses the GIF)
+showcase/*.mp4
+derivation/*.gif
