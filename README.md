@@ -31,6 +31,7 @@ Step-by-step SymPy scripts following Section III of the paper:
 | 8 | `step8_constraints.py` | Eqs. 20–24 | Contact bounds, friction models: 16-gon (default), exact cone, pyramid |
 | 9 | `step9_cost.py` | Eq. 18 | Least-squares cost: heading-frame velocity, yaw rate, height, roll/pitch, forces |
 | 10 | `step10_acados_ocp.py` | Sec. IV | Full NMPC as an acados OCP; standing, trot and hard-acceleration tests |
+| 11 | `step11_closed_loop.py` | Sec. V | Closed loop with SQP-RTI: stand, trot, forward, turn; plots, solve-time histogram (cf. Fig. 4) |
 
 **Friction model.** The friction cone `√(f_x² + f_y²) ≤ μ f_z` is enforced through one of three options
 (`build_solver(friction=...)` in step 10):
@@ -69,7 +70,7 @@ Tested versions:
 | acados | **v0.6.0** | built from source with qpOASES; HPIPM is the QP solver used |
 | SciPy / Matplotlib | 1.15.3 / 3.10.9 | plots, pendulum example |
 | imageio-ffmpeg | 0.8.1 | bundled ffmpeg for the showcase video |
-| ROS 2 | Humble | C++ package (planned) |
+| ROS 2 | Humble | C++ package (see Roadmap) |
 
 ## Running
 
@@ -106,3 +107,39 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/acados/lib
 cd derivation && ~/.venvs/robodog/bin/python step11_closed_loop.py   # writes step11_results.npz
 cd .. && ~/.venvs/robodog/bin/python showcase/render_3d.py            # writes showcase/robodog_nmpc.{mp4,gif}
 ```
+
+## Roadmap
+
+### Done
+- SRBD model derived step by step (SymPy), verified against the paper, three errata documented
+- Nonlinear MPC in CasADi + acados: SQP-RTI, contact schedule over the horizon, 16-gon friction cone
+- Closed-loop validation in simulation: velocity and yaw-rate tracking, median solve time ≈ 1.5 ms
+
+### Next: C++ and ROS 2 package
+- **Code generation script** that builds the acados solver from a single `config.yaml`
+  (mass, inertia, μ, cost weights, horizon N and dt, solver options), and documents which settings
+  are fixed at code generation (N, friction model) and which can change at runtime
+- **ROS 2 (Humble) C++ package** with a standalone solver class wrapping the generated acados C code:
+  - `initialize()`: load `config.yaml`, create the solver
+  - `run()`: inputs are the measured state, the commanded `v_x`, `v_y`, yaw rate, the contact schedule
+    over the horizon (N × 4) and the foot positions; one SQP-RTI iteration with warm start
+  - `getSolution()`: the optimal 3D ground reaction force of each foot (plus the predicted trajectory)
+- CMake integration of acados and the generated code; build with `colcon`
+- Unit tests: the C++ solver reproduces the Python results (standing, trot, turn)
+- Written formulation document (model, OCP, friction approximation)
+
+### Then: towards real hardware
+- **Whole-body integration**: map the forces to joint torques `τ = Jᵀ Rᵀ f` (paper Eq. 4), with a
+  swing-leg controller (Eqs. 1–2), a gait scheduler and a foothold planner (Raibert heuristic, Eq. 33)
+- **State estimation** (IMU + leg kinematics) as the source of the measured state
+- **Real-time execution**: dedicated control thread, timing budget per MPC call, handling of solver
+  failures (fall back to the previous plan), latency compensation
+- **Robustness tests** before hardware: model mismatch (leg mass, inertia errors), external pushes,
+  uneven terrain, early and late touchdowns, sensor noise, in a multi-body simulator (e.g. MuJoCo or Gazebo)
+- **Hardware experiments**: standing, trotting, turning; tune μ with a safety margin and the cost weights
+
+### Further improvements
+- Exact friction cone with fast convergence (exact Hessian or a better initial guess for SQP)
+- QP solver settings (iteration limit, warm start) to remove the few slow solves at gait/command changes
+- Orientation without Euler angles (rotation matrix / quaternion) for aggressive maneuvers
+- Foothold optimization inside the MPC and other gaits (pace, bound, gallop)
