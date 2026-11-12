@@ -23,5 +23,6 @@ notebooks/srbd_derivation.ipynb
 showcase/*.mp4
 derivation/*.gif
 
-# personal planning notes (local only)
+# personal planning / assistant notes (local only)
 PLAN.md
+CLAUDE.md
