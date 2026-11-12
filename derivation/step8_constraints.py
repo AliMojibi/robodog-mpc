@@ -58,7 +58,9 @@ def polygon_expr(n=N_POLY):
 polygon = polygon_expr()                      # 4 * N_POLY = 64 rows
 polygon_fun = ca.Function('polygon', [u, mu], [polygon])
 
-BIG = 1e9                                     # "no bound" for acados
+BIG = 1e10                                    # "no bound" for acados: must be >= ACADOS_INFTY (1e10),
+                                              # smaller values are passed to the QP solver as REAL (far-away)
+                                              # bounds and slow HPIPM down massively (measured: 50 vs. 6 QP iterations)
 
 
 def u_bounds(contact):

@@ -58,17 +58,19 @@ NY_E = 7                              # terminal cost uses y[0:7]: velocities, y
                                       # (no forces, because there is no input at the last node x_N)
 
 
-def build_solver(friction='polygon', nlp_solver_type='SQP', globalization='FIXED_STEP'):
+def build_solver(friction='polygon', nlp_solver_type='SQP', globalization='FIXED_STEP', tag=''):
     """Describe the OCP with AcadosOcp, then generate + compile + load the C solver.
     This is the slow part (a few seconds); it only has to be done once.
-    friction: 'polygon' (inscribed 16-gon, default), 'cone' (exact, nonlinear) or 'pyramid' (paper)."""
+    friction: 'polygon' (inscribed 16-gon, default), 'cone' (exact, nonlinear) or 'pyramid' (paper).
+    tag     : appended to the solver name and code folder, e.g. '_rti', so different solvers
+              (SQP vs. SQP_RTI) do not overwrite each other's generated code."""
 
     # ---- model: x_dot = f(x, u, p) ----
     # acados needs the CasADi symbols (x, u, p) and the expression for x_dot.
     # 'ERK' below integrates this with Runge-Kutta 4 to get x_{k+1} = F(x_k, u_k, p_k),
     # and CasADi generates the derivatives (A_k, B_k) automatically.
     model = AcadosModel()
-    model.name = f'srbd_{friction}'      # used in the names of the generated C files/functions
+    model.name = f'srbd_{friction}{tag}' # used in the names of the generated C files/functions
     model.x, model.u = x, u
     model.p = ca.vertcat(P, MU_SYM)      # 16 model parameters + mu (used by polygon and cone)
     model.f_expl_expr = x_dot            # explicit ODE  x_dot = f(x, u, p)
@@ -153,7 +155,7 @@ def build_solver(friction='polygon', nlp_solver_type='SQP', globalization='FIXED
     # Generate the C code into this folder, compile it to a .so, and load it into Python.
     # (acados >= 0.5.6: output folder and json file are set in ocp.code_gen_options;
     #  json_file is a file NAME only, it is always written into the export folder)
-    ocp.code_gen_options.code_export_directory = f'c_generated_code_srbd_{friction}'
+    ocp.code_gen_options.code_export_directory = f'c_generated_code_{model.name}'
     ocp.code_gen_options.json_file = 'acados_ocp.json'
     return AcadosOcpSolver(ocp, verbose=False)
 
