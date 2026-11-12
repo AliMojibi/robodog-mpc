@@ -49,21 +49,43 @@ v̇ = Σᵢ fᵢ / m + g,   g = [0, 0, −9.81]ᵀ
 - Eqs. 12/16: the small-angle map is `Rz(ψ)ᵀ`, not `Rz(ψ)`.
 - Eq. 5 vs. Table I: the gravity sign is counted twice; we use `g = [0, 0, −9.81]ᵀ`, added.
 
+## Dependencies
+
+Tested versions:
+
+| Component | Version | Notes |
+|---|---|---|
+| Ubuntu | 22.04 (WSL2) | |
+| Python | 3.10.12 | |
+| SymPy | 1.14.0 | derivation, steps 1–6 |
+| NumPy | 2.2.6 | |
+| CasADi | **3.7.2** | pinned to 3.7.x: the range acados v0.6.0 is tested with (3.8 gives a warning) |
+| acados | **v0.6.0** | built from source with qpOASES; HPIPM is the QP solver used |
+| SciPy / Matplotlib | 1.15.3 / 3.10.9 | pendulum example only |
+| ROS 2 | Humble | C++ package (planned) |
+
 ## Running
 
 ```bash
 python3 -m venv ~/.venvs/robodog
-~/.venvs/robodog/bin/pip install sympy casadi
+~/.venvs/robodog/bin/pip install sympy numpy "casadi==3.7.*"
 cd derivation
 ~/.venvs/robodog/bin/python step6_matrix_form.py
 ```
 
 Run the scripts from inside `derivation/`, since later steps import earlier ones.
 
-Step 10 also needs [acados](https://github.com/acados/acados) (v0.6.0, built in `~/acados`) and its Python
-interface (`pip install -e ~/acados/interfaces/acados_template`):
+Step 10 also needs [acados](https://github.com/acados/acados) v0.6.0 and its Python interface:
 
 ```bash
+# build acados (once)
+git clone --branch v0.6.0 --depth 1 --recurse-submodules --shallow-submodules \
+    https://github.com/acados/acados.git ~/acados
+mkdir -p ~/acados/build && cd ~/acados/build
+cmake -DACADOS_WITH_QPOASES=ON .. && make install -j$(nproc)
+~/.venvs/robodog/bin/pip install -e ~/acados/interfaces/acados_template
+
+# every terminal (or add to ~/.bashrc)
 export ACADOS_SOURCE_DIR=$HOME/acados
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/acados/lib
 ~/.venvs/robodog/bin/python step10_acados_ocp.py

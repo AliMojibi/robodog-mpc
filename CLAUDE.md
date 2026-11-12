@@ -47,7 +47,7 @@ lever arms `r_i = p_foot,i − p` stay functions of the state instead of being f
 - Default numbers: Cheetah 3 Table I (m = 43, I = diag(0.41, 2.1, 2.1), μ = 0.6, f_min = 10, f_max = 666; weights v 1, yaw rate 1, z 50, Θ 1, force 1e-6).
 
 ## Environment (WSL quirks)
-- Python env: `~/.venvs/robodog` (sympy, numpy, casadi, scipy, matplotlib, acados_template).
+- Python env: `~/.venvs/robodog` (sympy, numpy, **casadi pinned to 3.7.x** — tested range of acados v0.6.0, scipy, matplotlib, acados_template).
   Run scripts with `~/.venvs/robodog/bin/python`.
 - acados v0.6.0 in `~/acados`. Needs `ACADOS_SOURCE_DIR=$HOME/acados` and `LD_LIBRARY_PATH=$HOME/acados/lib`;
   Claude may not edit `~/.bashrc`, so pass them on the command line.
@@ -55,6 +55,7 @@ lever arms `r_i = p_foot,i − p` stay functions of the state instead of being f
 - Git data lives in `~/repos/robodog.git` (project `.git` is a pointer file); the project dir is in git's `safe.directory`.
 - Remote: https://github.com/AliMojibi/robodog-mpc (private, HTTPS, credentials stored).
 - DNS was fixed by setting `/etc/resolv.conf` to 1.1.1.1 / 8.8.8.8; if pip fails with "name resolution", check that first.
+  `/etc/wsl.conf` must contain `[network] generateResolvConf = false`, otherwise WSL rewrites resolv.conf on restart.
 - `sudo` is not available to Claude; ask the user to run such commands.
 
 ## Interface decisions

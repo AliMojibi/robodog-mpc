@@ -47,6 +47,10 @@ from step9_cost import y, W, make_y_ref
 N, TF = 16, 0.4                       # horizon: 16 intervals over 0.4 s -> dt = 0.025 s (paper: 10-16 steps, 0.33-0.5 s)
 DT = TF / N
 MASS, INERTIA = 43.0, [0.41, 2.1, 2.1]   # Cheetah 3, paper Table I
+# FOOT ORDER used everywhere (forces u, foot positions, contact flags):  0 = FR, 1 = FL, 2 = RR, 3 = RL
+#   FR = front right, FL = front left, RR = rear right, RL = rear left
+#   e.g. a contact row [1, 0, 0, 1] means FR and RL on the ground, FL and RR in the air
+FEET = ['FR', 'FL', 'RR', 'RL']
 HX, HY, Z_DES = 0.30, 0.15, 0.45      # hip offsets from the CoM [m] and desired body height [m]
 HIPS = np.array([[HX, -HY], [HX, HY], [-HX, -HY], [-HX, HY]])   # x-y of the hips: FR, FL, RR, RL
 IDX_FZ = [2, 5, 8, 11]                # positions of f_z in u = [f_FR_x, f_FR_y, f_FR_z, f_FL_x, ...]
@@ -147,16 +151,21 @@ def build_solver(friction='polygon', nlp_solver_type='SQP', globalization='FIXED
     ocp.solver_options.globalization = globalization
 
     # Generate the C code into this folder, compile it to a .so, and load it into Python.
-    ocp.code_export_directory = f'c_generated_code_srbd_{friction}'
-    return AcadosOcpSolver(ocp, json_file=f'{ocp.code_export_directory}/acados_ocp.json', verbose=False)
+    # (acados >= 0.5.6: output folder and json file are set in ocp.code_gen_options;
+    #  json_file is a file NAME only, it is always written into the export folder)
+    ocp.code_gen_options.code_export_directory = f'c_generated_code_srbd_{friction}'
+    ocp.code_gen_options.json_file = 'acados_ocp.json'
+    return AcadosOcpSolver(ocp, verbose=False)
 
 
 def solve(solver, friction, x0, cmd, contact, feet):
     """Fill in all runtime data for one MPC solve, solve, and return the plan.
 
     cmd     = (vx, vy, yaw_rate)               operator command, heading frame
-    contact : N x 4 flags (1 = stance)          one row per interval k = 0 .. N-1
-    feet    : (N+1) x 4 x 3                     world foot positions per node k = 0 .. N
+    contact : N x 4 flags                       one row per interval k = 0 .. N-1,
+              contact[k] = [c_FR, c_FL, c_RR, c_RL], 1 = stance (foot on the ground), 0 = swing
+    feet    : (N+1) x 4 x 3                     world foot positions per node k = 0 .. N,
+              feet[k] = [p_FR, p_FL, p_RR, p_RL], each [x, y, z]
     returns status (0 = success), X ((N+1) x 12 predicted states), U (N x 12 planned forces)
     """
     y_ref = np.array(make_y_ref(*cmd, Z_DES))
@@ -177,8 +186,7 @@ def solve(solver, friction, x0, cmd, contact, feet):
             solver.constraints_set(k, 'uh', np.array(cone_upper(contact[k])))
         # same command over the whole horizon
         solver.set(k, 'yref', y_ref)
-        # initial guess for SQP: the robot stays where it is, and the stance feet share
-        # the weight equally. A good guess means fewer SQP iterations.
+        # initial guess for SQP: the robot stays where it is, and the stance feet share the weight equally.
         u_guess = np.zeros(12)
         u_guess[IDX_FZ] = c * MASS * G0 / max(c.sum(), 1)
         solver.set(k, 'u', u_guess)
@@ -221,20 +229,22 @@ def report(name, solver, status, X, U, contact, table=True):
     print(f"status {status} (0 = success), SQP iterations {solver.get_stats('sqp_iter')}, "
           f"time {1000 * solver.get_stats('time_tot'):.2f} ms")
     print("u_0 (forces to apply now) [N]:")
-    for i, n in enumerate(['FR', 'FL', 'RR', 'RL']):
+    for i, n in enumerate(FEET):
         print(f"  {n}: [{U[0, 3*i]:8.2f} {U[0, 3*i+1]:8.2f} {U[0, 3*i+2]:8.2f}]")
 
     if table:
-        # one row per node: contact flags of that interval, predicted state, total vertical force,
-        # friction use (must stay <= mu = 0.6), and whether the true cone + contact bounds hold
-        print(f"\n  {'k':>2} {'t[s]':>5}  contact   {'v_x':>6} {'v_y':>6} {'z':>6} "
+        # one row per node: contact flags of that interval (one column per foot, 1 = stance, - = swing),
+        # predicted state, total vertical force, friction use (must stay <= mu = 0.6),
+        # and whether the true cone + contact bounds hold
+        print(f"\n  {'k':>2} {'t[s]':>5}  {' '.join(FEET)}   {'v_x':>6} {'v_y':>6} {'z':>6} "
               f"{'roll°':>6} {'pitch°':>6} {'Σf_z':>7} {'|ft|/fz':>8}  ok")
         for k in range(N):
-            print(f"  {k:>2} {k*DT:5.3f}  {''.join(map(str, contact[k]))}      {X[k,9]:6.3f} {X[k,10]:6.3f} "
+            flags = '  '.join('1' if c else '-' for c in contact[k])
+            print(f"  {k:>2} {k*DT:5.3f}   {flags}    {X[k,9]:6.3f} {X[k,10]:6.3f} "
                   f"{X[k,5]:6.3f} {np.degrees(X[k,0]):6.2f} {np.degrees(X[k,1]):6.2f} "
                   f"{U[k, IDX_FZ].sum():7.1f} {used[k]:8.3f}  {'yes' if viol[k] <= 1e-4 else 'NO'}")
         # last node: state only, there is no force after x_N
-        print(f"  {N:>2} {N*DT:5.3f}            {X[N,9]:6.3f} {X[N,10]:6.3f} {X[N,5]:6.3f}")
+        print(f"  {N:>2} {N*DT:5.3f}                 {X[N,9]:6.3f} {X[N,10]:6.3f} {X[N,5]:6.3f}")
     print(f"max friction use |f_t|/f_z = {used.max():.3f}  (mu = {MU}),  "
           f"max violation of true cone / contact bounds = {viol.max():.2e} N")
     print(f"predicted velocity at the end of the horizon: v_x = {X[N,9]:.3f}, v_y = {X[N,10]:.3f} m/s")
@@ -245,7 +255,10 @@ def trot(vx_cmd, vy_cmd=0.0):
     during each stance phase the foot stays fixed under its hip at the middle of that phase,
     assuming the body moves at the commanded velocity. (Swing-foot positions do not matter:
     their force is 0, so their lever arm has no effect.)"""
-    contact = [[1, 0, 0, 1] if (k // 4) % 2 == 0 else [0, 1, 1, 0] for k in range(N)]
+    #         FR FL RR RL
+    pair_a = [1, 0, 0, 1]     # FR + RL on the ground, FL + RR in the air
+    pair_b = [0, 1, 1, 0]     # FL + RR on the ground, FR + RL in the air
+    contact = [pair_a if (k // 4) % 2 == 0 else pair_b for k in range(N)]
     feet = []
     for k in range(N + 1):
         t_mid = ((min(k, N - 1) // 4) * 4 + 2) * DT     # mid-time of the phase that node k belongs to
@@ -257,7 +270,7 @@ if __name__ == '__main__':
     solver = build_solver('polygon')         # inscribed 16-gon of the friction cone (default)
 
     # start: standing at the desired height, level, at rest
-    #                Theta      p              omega      v
+    #                Theta      p            omega         v
     x0 = np.array([0, 0, 0,  0, 0, Z_DES,  0, 0, 0,  0, 0, 0], dtype=float)
 
     # ---- test 1: standing, command zero ----
