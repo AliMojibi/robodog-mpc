@@ -38,10 +38,41 @@ y_fun = ca.Function('y', [x, u], [y])
 
 if __name__ == '__main__':
     import math
-    print("y has", y.shape[0], "entries; W is diagonal", W.shape)
+    labels = ['v_x (heading)', 'v_y (heading)', 'v_z (heading)', 'omega_z', 'p_z', 'phi', 'theta'] + \
+             [f'f_{n}_{c}' for n in ['FR', 'FL', 'RR', 'RL'] for c in 'xyz']
+
+    print("================ y(x, u): the cost vector (19 entries) ================")
+    for k in range(y.shape[0]):
+        print(f"  y[{k:>2}] {labels[k]:<14} = {y[k]}")
+
+    print("\n================ W: diagonal weight matrix (19 x 19) ================")
+    W_diag = ca.DM(ca.diag(W)).full().ravel()
+    for k in range(y.shape[0]):
+        print(f"  W[{k:>2},{k:>2}] {labels[k]:<14} = {W_diag[k]:g}")
 
     m, z_des = 43.0, 0.45
     u_stand = [0, 0, m * G0 / 4] * 4
+
+    print("\n================ y_ref for command v_x = 0.5, v_y = 0.2, yaw rate = 0.3, z = 0.45 ================")
+    ref_example = make_y_ref(0.5, 0.2, 0.3, z_des)
+    for k in range(len(ref_example)):
+        print(f"  y_ref[{k:>2}] {labels[k]:<14} = {ref_example[k]:g}")
+
+    print("\n================ worked example: cost broken down entry by entry ================")
+    print("state: psi = 30 deg, z = 0.43, roll = 2 deg, world v = [0.4, 0.3, 0], yaw rate 0.2; forces W/4 per foot")
+    x_ex = [math.radians(2), 0, math.radians(30),  0, 0, 0.43,  0, 0, 0.2,  0.4, 0.3, 0]
+    y_ex = y_fun(x_ex, u_stand).full().ravel()
+    print(f"  {'entry':<14} {'y':>10} {'y_ref':>10} {'error':>10} {'W':>8} {'W*err^2':>10}")
+    total = 0.0
+    for k in range(y.shape[0]):
+        e = y_ex[k] - ref_example[k]
+        c = W_diag[k] * e ** 2
+        total += c
+        print(f"  {labels[k]:<14} {y_ex[k]:>10.4f} {ref_example[k]:>10.4f} {e:>10.4f} {W_diag[k]:>8g} {c:>10.5f}")
+    print(f"  {'sum':<14} {'':>10} {'':>10} {'':>10} {'':>8} {total:>10.5f}")
+    print(f"  cost() function gives: {float(cost(x_ex, u_stand, ref_example)):.5f}")
+
+    print("\n================ examples ================")
 
     def state(psi_=0.0, z=z_des, vx=0.0, vy=0.0):
         return [0, 0, psi_,  0, 0, z,  0, 0, 0,  vx, vy, 0]

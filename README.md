@@ -22,8 +22,18 @@ Step-by-step SymPy scripts following Section III of the paper:
 | 5 | `step5_equations_of_motion.py` | Eqs. 5–7, 13 | Full 12-state model `ẋ = f(x, u)` |
 | 6 | `step6_matrix_form.py` | Eqs. 16–17 | Same model in matrix form, standing check |
 | 7 | `step7_casadi_model.py` | — | Model in CasADi (`f_dyn(x, u, P)`), verified against SymPy |
-| 8 | `step8_constraints.py` | Eqs. 20–24 | Contact-scaled `f_z` bounds, friction pyramid `D u ≤ 0` |
+| 8 | `step8_constraints.py` | Eqs. 20–24 | Contact bounds, friction models: 16-gon (default), exact cone, pyramid |
 | 9 | `step9_cost.py` | Eq. 18 | Least-squares cost: heading-frame velocity, yaw rate, height, roll/pitch, forces |
+| 10 | `step10_acados_ocp.py` | Sec. IV | Full NMPC as an acados OCP; standing, trot and hard-acceleration tests |
+
+**Friction model.** The friction cone `√(f_x² + f_y²) ≤ μ f_z` is enforced through one of three options
+(`build_solver(friction=...)` in step 10):
+
+| Option | Constraint | Notes |
+|---|---|---|
+| `polygon` (**default**) | inscribed 16-gon of the cone, `cos θⱼ f_x + sin θⱼ f_y − μ cos(π/16) f_z ≤ 0` | linear in `u` → fast, robust SQP; never exceeds μ; at most 1.9 % conservative; μ is a runtime parameter |
+| `cone` | exact cone, `√(f_x² + f_y² + ε²) − μ f_z ≤ 0` | available; converges slowly (26 vs. 6 SQP iterations on a 0.5 m/s trot) and not at all when friction is the limiting factor |
+| `pyramid` | paper's `\|f_x\|, \|f_y\| ≤ μ f_z` | comparison only: lies outside the cone and allows up to 1.41 μ (feet would slip) |
 
 **Model** (state `x = [Θ, p, ω, v]`, input `u = [f_FR, f_FL, f_RR, f_RL]`, world frame):
 
@@ -49,3 +59,12 @@ cd derivation
 ```
 
 Run the scripts from inside `derivation/`, since later steps import earlier ones.
+
+Step 10 also needs [acados](https://github.com/acados/acados) (v0.6.0, built in `~/acados`) and its Python
+interface (`pip install -e ~/acados/interfaces/acados_template`):
+
+```bash
+export ACADOS_SOURCE_DIR=$HOME/acados
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/acados/lib
+~/.venvs/robodog/bin/python step10_acados_ocp.py
+```
