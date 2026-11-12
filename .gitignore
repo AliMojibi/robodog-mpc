@@ -22,3 +22,6 @@ notebooks/srbd_derivation.ipynb
 # showcase video (kept local; the README uses the GIF)
 showcase/*.mp4
 derivation/*.gif
+
+# personal planning notes (local only)
+PLAN.md
