@@ -6,6 +6,12 @@ __pycache__/
 # Licensed / third-party reference documents (kept local only)
 references/*.pdf
 
+# acados generated code and outputs
+c_generated_code*/
+acados_ocp*.json
+acados_sim*.json
+*.png
+
 # Earlier all-in-one notebook (kept local only)
 notebooks/srbd_derivation.ipynb
 .ipynb_checkpoints/
