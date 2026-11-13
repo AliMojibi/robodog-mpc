@@ -15,7 +15,7 @@ model but leave those as functions of the state, which makes it nonlinear and su
 Orange arrows are the ground reaction forces computed by the NMPC. The legs are for display only;
 the controller uses the single-rigid-body model.*
 
-## Derivation (`derivation/`)
+## Derivation (`robodog_nmpc/scripts/derivation/`)
 
 Step-by-step SymPy scripts following Section III of the paper:
 
@@ -70,6 +70,7 @@ Tested versions:
 | acados | **v0.6.0** | built from source with qpOASES; HPIPM is the QP solver used |
 | SciPy / Matplotlib | 1.15.3 / 3.10.9 | plots, pendulum example |
 | imageio-ffmpeg | 0.8.1 | bundled ffmpeg for the showcase video |
+| PyYAML | 6.0.3 | reads `config.yaml` |
 | ROS 2 | Humble | C++ package (see Roadmap) |
 
 ## Running
@@ -77,11 +78,11 @@ Tested versions:
 ```bash
 python3 -m venv ~/.venvs/robodog
 ~/.venvs/robodog/bin/pip install sympy numpy "casadi==3.7.*"
-cd derivation
+cd robodog_nmpc/scripts/derivation
 ~/.venvs/robodog/bin/python step6_matrix_form.py
 ```
 
-Run the scripts from inside `derivation/`, since later steps import earlier ones.
+Run the scripts from inside `robodog_nmpc/scripts/derivation/`, since later steps import earlier ones.
 
 Step 10 also needs [acados](https://github.com/acados/acados) v0.6.0 and its Python interface:
 
@@ -99,13 +100,29 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/acados/lib
 ~/.venvs/robodog/bin/python step10_acados_ocp.py
 ```
 
+## Solver code generation (`robodog_nmpc/`)
+
+All parameters live in `robodog_nmpc/config/config.yaml` (ROS 2 parameter-file format). Each setting is
+tagged `[codegen]` (compiled into the solver: regenerate after changing it) or `[runtime]` (read by the
+C++ class at start-up). The script validates the whole file first and reports every problem at once.
+
+```bash
+cd robodog_nmpc
+export ACADOS_SOURCE_DIR=$HOME/acados LD_LIBRARY_PATH=$HOME/acados/lib
+~/.venvs/robodog/bin/python scripts/generate_solver.py          # -> solver/ (C code + libacados_ocp_solver_srbd_nmpc.so)
+~/.venvs/robodog/bin/python -m unittest discover -s test -v     # workflow tests (~90 s)
+```
+
+`scripts/srbd_ocp.py` builds the optimal control problem; the model, friction and cost are imported from
+the derivation steps 7–9 (single source of truth).
+
 ## Showcase animation
 
 `showcase/render_3d.py` renders the closed-loop run of step 11 in 3D (MP4 1280×720 + a small GIF):
 
 ```bash
-cd derivation && ~/.venvs/robodog/bin/python step11_closed_loop.py   # writes step11_results.npz
-cd .. && ~/.venvs/robodog/bin/python showcase/render_3d.py            # writes showcase/robodog_nmpc.{mp4,gif}
+cd robodog_nmpc/scripts/derivation && ~/.venvs/robodog/bin/python step11_closed_loop.py   # writes step11_results.npz
+cd ../../.. && ~/.venvs/robodog/bin/python showcase/render_3d.py            # writes showcase/robodog_nmpc.{mp4,gif}
 ```
 
 ## Roadmap

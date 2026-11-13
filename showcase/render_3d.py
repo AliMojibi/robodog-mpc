@@ -1,6 +1,6 @@
 """3D showcase animation of the closed-loop NMPC run (portfolio material, not part of the task).
 
-Reads the results saved by derivation/step11_closed_loop.py and renders:
+Reads the results saved by robodog_nmpc/scripts/derivation/step11_closed_loop.py and renders:
   - the robot body as a shaded box, with two-link legs (thigh + shank, knees bent backward)
   - a checkerboard floor, the body's shadow, footprints of past touchdowns, the CoM trail
   - the ground reaction forces of the stance feet as arrows
@@ -24,7 +24,8 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import imageio_ffmpeg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'derivation'))
+DERIVATION = os.path.join(HERE, '..', 'robodog_nmpc', 'scripts', 'derivation')
+sys.path.insert(0, DERIVATION)
 from utils.plots import _foot_trajectories, _rot, FEET          # noqa: E402
 
 plt.rcParams['animation.ffmpeg_path'] = imageio_ffmpeg.get_ffmpeg_exe()
@@ -199,6 +200,6 @@ def render(npz_path, out_mp4, out_gif):
 
 
 if __name__ == '__main__':
-    render(os.path.join(HERE, '..', 'derivation', 'step11_results.npz'),
+    render(os.path.join(DERIVATION, 'step11_results.npz'),
            os.path.join(HERE, 'robodog_nmpc.mp4'),
            os.path.join(HERE, 'robodog_nmpc.gif'))

@@ -21,8 +21,11 @@ notebooks/srbd_derivation.ipynb
 
 # showcase video (kept local; the README uses the GIF)
 showcase/*.mp4
-derivation/*.gif
+robodog_nmpc/scripts/derivation/*.gif
 
 # personal planning / assistant notes (local only)
 PLAN.md
 CLAUDE.md
+
+# generated acados C solver (output of robodog_nmpc/scripts/generate_solver.py)
+robodog_nmpc/solver/

@@ -1,0 +1,63 @@
+# Configuration of the robodog_nmpc solver (nonlinear MPC on the single-rigid-body model).
+#
+# Format: standard ROS 2 parameter file. The solver class reads it directly (yaml-cpp), so no ROS node
+# is needed; it can also be loaded into a node with --params-file.
+#
+# Every setting is tagged:
+#   [codegen]  compiled into the generated C solver  -> after changing it, rerun scripts/generate_solver.py
+#   [runtime]  read by the C++ class at initialize() -> takes effect without regenerating
+#
+# Conventions: world frame z up; foot order FR, FL, RR, RL; commands (v_x, v_y, yaw rate) in the robot's
+# heading frame; output forces in the world frame. Default values: MIT Cheetah 3 (Di Carlo et al. 2018, Table I).
+
+robodog_nmpc:
+  ros__parameters:
+
+    robot:
+      mass: 43.0                        # [kg]                                              [runtime]
+      inertia: [0.41, 2.1, 2.1]         # body-frame principal inertia Ixx, Iyy, Izz [kg m^2] [runtime]
+      nominal_height: 0.45              # desired CoM height above the ground [m]           [runtime]
+      hip_offsets_xy: [ 0.30, -0.15,    # FR   hip x, y relative to the CoM, body frame [m]  [runtime]
+                        0.30,  0.15,    # FL   (only used by the foothold fallback when the
+                       -0.30, -0.15,    # RR    caller does not provide foot positions for
+                       -0.30,  0.15]    # RL    the whole horizon)
+
+    horizon:
+      N: 16                             # number of shooting intervals                       [codegen]
+      dt: 0.025                         # interval length [s]; horizon = N * dt = 0.4 s       [codegen]
+
+    friction:
+      model: polygon                    # polygon | cone | pyramid                            [codegen]
+                                        #   polygon: inscribed n-gon of the cone (default; robust,
+                                        #            never exceeds mu, <= 1 - cos(pi/n) conservative)
+                                        #   cone:    exact cone (slow / poor SQP convergence)
+                                        #   pyramid: paper's |f_x|,|f_y| <= mu f_z (lies outside the cone)
+      polygon_sides: 16                 # n for the polygon model (16 -> at most 1.9 % conservative) [codegen]
+      mu: 0.6                           # friction coefficient                                [runtime]*
+                                        #   *pyramid model only: mu is compiled in            [codegen]
+      f_min: 10.0                       # minimum normal force of a stance foot [N]           [runtime]
+      f_max: 666.0                      # maximum normal force of a stance foot [N]           [runtime]
+
+    cost:                               # stage cost 1/2 ||y - y_ref||^2_W, W diagonal        [runtime]
+      w_velocity: [1.0, 1.0, 1.0]       # v_x, v_y, v_z in the heading frame
+      w_yaw_rate: 1.0
+      w_height: 50.0
+      w_roll_pitch: [1.0, 1.0]
+      w_force: 1.0e-6                   # on every force component (regularization)
+      terminal_weight_scale: 1.0        # terminal cost: same state weights (no forces) times this factor
+
+    solver:                             # acados options                                     [codegen]
+      nlp_solver_type: SQP_RTI          # one SQP iteration per run() (real-time iteration)
+      qp_solver: PARTIAL_CONDENSING_HPIPM
+      hessian_approx: GAUSS_NEWTON
+      integrator_type: ERK              # explicit Runge-Kutta
+      sim_method_num_stages: 4          # RK4
+      sim_method_num_steps: 1           # integration steps per shooting interval
+      globalization: FIXED_STEP         # MERIT_BACKTRACKING was slower in every test
+      nlp_solver_max_iter: 50           # only relevant for nlp_solver_type SQP
+      qp_solver_iter_max: 50
+
+    codegen:                            # used by scripts/generate_solver.py                  [codegen]
+      solver_name: srbd_nmpc            # fixed name -> stable file and function names:
+                                        #   acados_solver_srbd_nmpc.h, libacados_ocp_solver_srbd_nmpc.so
+      export_dir: solver                # output folder, relative to the package root

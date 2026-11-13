@@ -13,7 +13,7 @@ Scenario (7 s), see SCENARIO below:
     stand | trot in place | trot forward 0.5 m/s | forward + turn 0.6 rad/s | forward on the new heading
 """
 import numpy as np
-from utils import plots                       # plotting helpers (derivation/utils/plots.py)
+from utils import plots                       # plotting helpers (utils/plots.py next to this file)
 
 from step7_casadi_model import f_dyn, G0
 from step8_constraints import u_bounds, cone_fun, MU, F_MIN, F_MAX, N_POLY
