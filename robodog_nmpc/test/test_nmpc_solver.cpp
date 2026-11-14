@@ -299,3 +299,102 @@ TEST(Run, Timing) {
             << " ms, 99% " << t[990] << " ms, max " << t.back() << " ms" << std::endl;
   EXPECT_LT(t[500], 5.0);   // generous: ~1.5 ms expected on a desktop CPU
 }
+
+// ---------------- form (b): foothold prediction (Raibert) ----------------
+
+namespace {
+
+// Trot schedule over N = 16 intervals: FR + RL in stance for intervals 0-3 and 8-11, FL + RR for 4-7 and 12-15.
+std::vector<Contact> trotSchedule(int n = 16, int phase = 4) {
+  std::vector<Contact> s(n);
+  for (int k = 0; k < n; ++k) {
+    const bool a = (k / phase) % 2 == 0;
+    s[k] = {a, !a, !a, a};
+  }
+  return s;
+}
+
+std::vector<FootPositions> predict(const Config& c, const State& s, const Command& cmd,
+                                   const std::vector<Contact>& schedule, const FootPositions& current) {
+  std::vector<FootPositions> out(schedule.size() + 1);
+  robodog_nmpc::detail::predictFeet(c, s, cmd, schedule.data(), static_cast<int>(schedule.size()), current, out.data());
+  return out;
+}
+
+void expectNear(const Eigen::Vector3d& a, const Eigen::Vector3d& b, const std::string& what) {
+  EXPECT_LT((a - b).norm(), 1e-12) << what << ": got " << a.transpose() << ", expected " << b.transpose();
+}
+
+}  // namespace
+
+TEST(PredictFeet, TrotForwardByHand) {
+  const Config c = robodog_nmpc::loadConfig(CONFIG_YAML);   // dt 0.025, hips (+-0.30, +-0.15)
+  FootPositions now = feetUnderHips(c);
+  now[1].z() = now[2].z() = 0.08;                           // FL and RR are in the air now
+  const auto f = predict(c, standing(), Command{0.5, 0.0, 0.0}, trotSchedule(), now);
+  for (int k : {0, 3, 4, 7, 12, 15, 16}) expectNear(f[k][0], now[0], "FR, node " + std::to_string(k));  // stance now / swing
+  // FR touches down at interval 8: CoM x = 0.5 * 8 * 0.025 = 0.1; + hip 0.30 + v T/2 = 0.5 * 0.1 / 2 = 0.025
+  for (int k = 8; k <= 11; ++k) expectNear(f[k][0], Eigen::Vector3d(0.425, -0.15, 0.0), "FR, node " + std::to_string(k));
+  // FL touches down at 4 (CoM x 0.05) and at 12 (CoM x 0.15); ground = lowest foot now (0.0)
+  for (int k = 4; k <= 7; ++k) expectNear(f[k][1], Eigen::Vector3d(0.375, 0.15, 0.0), "FL, node " + std::to_string(k));
+  for (int k = 12; k <= 16; ++k) expectNear(f[k][1], Eigen::Vector3d(0.475, 0.15, 0.0), "FL, node " + std::to_string(k));
+  for (int k : {0, 3, 8, 11}) expectNear(f[k][1], now[1], "FL in swing, node " + std::to_string(k));
+}
+
+TEST(PredictFeet, HeadingRotatesHipsAndCommand) {
+  const Config c = robodog_nmpc::loadConfig(CONFIG_YAML);
+  State s = standing();
+  s.rpy.z() = M_PI / 2;   // facing +y: forward command moves +y, FR hip (0.30, -0.15) is at world (0.15, 0.30)
+  const auto f = predict(c, s, Command{0.5, 0.0, 0.0}, trotSchedule(), feetUnderHips(c));
+  expectNear(f[8][0], Eigen::Vector3d(0.15, 0.1 + 0.30 + 0.025, 0.0), "FR touchdown at 8");
+}
+
+TEST(PredictFeet, TruncatedStanceAndRaisedGround) {
+  const Config c = robodog_nmpc::loadConfig(CONFIG_YAML);
+  std::vector<Contact> schedule(16, Contact{true, false, true, true});
+  schedule[14][1] = schedule[15][1] = true;               // FL touches down at 14, phase cut by the horizon: T = 0.05
+  FootPositions now = feetUnderHips(c);
+  for (auto& p : now) p.z() = 0.2;                        // robot on a 0.2 m platform
+  now[1].z() = 0.3;                                       // FL in the air
+  const auto f = predict(c, standing(0.65), Command{0.5, 0.0, 0.0}, schedule, now);
+  expectNear(f[14][1], Eigen::Vector3d(0.5 * 14 * 0.025 + 0.30 + 0.5 * 0.05 / 2, 0.15, 0.2), "FL touchdown at 14");
+  expectNear(f[16][1], f[14][1], "FL, last node");
+  for (int k = 0; k <= 16; ++k) expectNear(f[k][0], now[0], "FR, stance the whole time");
+}
+
+TEST(PredictFeet, ConstantScheduleKeepsTheFeet) {
+  const Config c = robodog_nmpc::loadConfig(CONFIG_YAML);
+  const auto f = predict(c, standing(), Command{0.5, 0.2, 0.6}, std::vector<Contact>(16, Contact{true, false, false, true}),
+                         feetUnderHips(c));
+  for (int k = 0; k <= 16; ++k)
+    for (int leg = 0; leg < 4; ++leg) EXPECT_EQ(f[k][leg], feetUnderHips(c)[leg]);
+}
+
+TEST(Run, FormBMatchesTheOtherForms) {
+  NmpcSolver a, b, c;
+  ASSERT_EQ(a.initialize(CONFIG_YAML), Status::Ok);
+  ASSERT_EQ(b.initialize(CONFIG_YAML), Status::Ok);
+  ASSERT_EQ(c.initialize(CONFIG_YAML), Status::Ok);
+  const FootPositions feet = feetUnderHips(a.config());
+  const Command cmd{0.4, 0.0, 0.3};
+  // constant contact: (b) == (a)
+  const Contact pair{true, false, false, true};
+  ASSERT_EQ(a.run(standing(), cmd, pair, feet), Status::Ok);
+  ASSERT_EQ(b.run(standing(), cmd, std::vector<Contact>(16, pair), feet), Status::Ok);
+  for (int leg = 0; leg < 4; ++leg) EXPECT_EQ(a.getSolution().forces[leg], b.getSolution().forces[leg]);
+  // gait schedule: (b) == (c) with the predicted foot plan
+  ASSERT_EQ(b.initialize(CONFIG_YAML), Status::Ok);
+  ASSERT_EQ(b.run(standing(), cmd, trotSchedule(), feet), Status::Ok);
+  ASSERT_EQ(c.run(standing(), cmd, trotSchedule(), predict(c.config(), standing(), cmd, trotSchedule(), feet)), Status::Ok);
+  for (int leg = 0; leg < 4; ++leg) EXPECT_EQ(b.getSolution().forces[leg], c.getSolution().forces[leg]);
+}
+
+TEST(Run, FormBInvalidInput) {
+  NmpcSolver mpc;
+  ASSERT_EQ(mpc.initialize(CONFIG_YAML), Status::Ok);
+  FootPositions feet = feetUnderHips(mpc.config());
+  EXPECT_EQ(mpc.run(standing(), Command{}, trotSchedule(15), feet), Status::InvalidInput);
+  EXPECT_EQ(mpc.run(standing(), Command{}, std::vector<Contact>{}, feet), Status::InvalidInput);
+  feet[3].x() = std::nan("");
+  EXPECT_EQ(mpc.run(standing(), Command{}, trotSchedule(), feet), Status::InvalidInput);
+}

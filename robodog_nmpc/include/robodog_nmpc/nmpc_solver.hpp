@@ -37,6 +37,13 @@ class NmpcSolver {
   // (a) contact flags and foot positions held over the whole horizon (task-literal form).
   Status run(const State& state, const Command& cmd, const Contact& contact, const FootPositions& feet);
 
+  // (b) contact schedule for the N intervals + the CURRENT foot positions. A foot keeps its position while it
+  // stays on the ground; for a later stance phase its foothold is predicted (Raibert heuristic, paper Eq. 33):
+  // hip position on the commanded path at touchdown + v_cmd * T_stance / 2, on the height of the lowest foot now.
+  // T_stance is counted from the schedule (truncated at the end of the horizon).
+  Status run(const State& state, const Command& cmd, const std::vector<Contact>& contact_schedule,
+             const FootPositions& feet);
+
   // (c) full form: contact schedule for the N intervals and foot positions for the N + 1 nodes, from the caller.
   Status run(const State& state, const Command& cmd, const std::vector<Contact>& contact_schedule,
              const std::vector<FootPositions>& foot_plan);
@@ -51,5 +58,12 @@ class NmpcSolver {
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
+
+namespace detail {
+// Form (b): foot positions for the n + 1 nodes from a schedule of n intervals (writes out[0..n]). Used by run(),
+// exposed for tests. No allocation.
+void predictFeet(const Config& config, const State& state, const Command& cmd, const Contact* schedule, int n,
+                 const FootPositions& current, FootPositions* out);
+}  // namespace detail
 
 }  // namespace robodog_nmpc

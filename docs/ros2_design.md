@@ -238,7 +238,11 @@ public:
   Status run(const State& state, const Command& cmd, const Contact& contact, const FootPositions& feet);
 
   // (b) contact schedule (N entries) + current foot positions only: footholds of feet that touch down
-  //     later in the horizon are predicted with the Raibert heuristic (Eq. 33).          [not implemented yet]
+  //     later in the horizon are predicted with the Raibert heuristic (Eq. 33): hip on the commanded path
+  //     at touchdown + v_cmd T_stance / 2, T_stance counted from the schedule, height of the lowest foot now.
+  Status run(const State& state, const Command& cmd,
+             const std::vector<Contact>& contact_schedule,          // N entries
+             const FootPositions& feet);                            // current positions
 
   // (c) full form: a contact schedule and planned foot positions for every horizon node.
   Status run(const State& state, const Command& cmd,

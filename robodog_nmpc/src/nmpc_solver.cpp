@@ -6,6 +6,8 @@
 #include <array>
 #include <cmath>
 
+#include <Eigen/Geometry>
+
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_solver_srbd_nmpc.h"
 
@@ -32,6 +34,41 @@ bool finite(const Command& c) { return std::isfinite(c.vx) && std::isfinite(c.vy
 bool finite(const FootPositions& f) { return std::all_of(f.begin(), f.end(), [](const auto& v) { return finite(v); }); }
 
 }  // namespace
+
+void detail::predictFeet(const Config& config, const State& state, const Command& cmd, const Contact* schedule,
+                         int n, const FootPositions& current, FootPositions* out) {
+  const double dt = config.horizon.dt;
+  double ground = current[0].z();  // flat ground at the height of the lowest foot now (a stance foot)
+  for (const auto& f : current) ground = std::min(ground, f.z());
+
+  for (int leg = 0; leg < kNumFeet; ++leg) {
+    // the CoM on the commanded path (heading frame command, constant over the horizon), node by node
+    Eigen::Vector2d com = state.position.head<2>();
+    double yaw = state.rpy.z();
+    int touchdown = -1;  // interval at which the current (predicted) stance phase of this foot began
+    Eigen::Vector3d foothold = current[leg];
+    for (int k = 0; k <= n; ++k) {
+      const int j = std::min(k, n - 1);  // node n belongs to the last interval
+      if (k > 0 && k < n && schedule[k][leg] && !schedule[k - 1][leg]) {
+        // touchdown at interval k: Raibert foothold from the CoM and yaw predicted for that time
+        int stance = 0;
+        while (k + stance < n && schedule[k + stance][leg]) ++stance;
+        const Eigen::Rotation2Dd R(yaw);
+        const Eigen::Vector2d hip(config.robot.hip_offsets_xy[2 * leg], config.robot.hip_offsets_xy[2 * leg + 1]);
+        const Eigen::Vector2d v_ref = R * Eigen::Vector2d(cmd.vx, cmd.vy);
+        const Eigen::Vector2d xy = com + R * hip + v_ref * (stance * dt) / 2.0;
+        foothold = Eigen::Vector3d(xy.x(), xy.y(), ground);
+        touchdown = k;
+      }
+      // swing, or stance since now: current position; later stance phase: its predicted foothold
+      out[k][leg] = (schedule[j][leg] && touchdown >= 0) ? foothold : current[leg];
+      if (k < n) {  // advance the commanded path by one interval
+        com += Eigen::Rotation2Dd(yaw) * Eigen::Vector2d(cmd.vx, cmd.vy) * dt;
+        yaw += cmd.yaw_rate * dt;
+      }
+    }
+  }
+}
 
 struct NmpcSolver::Impl {
   srbd_nmpc_solver_capsule* capsule = nullptr;
@@ -310,6 +347,20 @@ Status NmpcSolver::run(const State& state, const Command& cmd, const Contact& co
     return s.fallback(Status::InvalidInput, "run(): state, command or foot positions contain NaN or Inf", &contact);
   s.contact.fill(contact);
   s.feet.fill(feet);
+  return s.solve(state, cmd);
+}
+
+Status NmpcSolver::run(const State& state, const Command& cmd, const std::vector<Contact>& contact_schedule,
+                       const FootPositions& feet) {
+  Impl& s = *impl_;
+  if (!s.begin()) return Status::NotInitialized;
+  const Contact* now = contact_schedule.empty() ? nullptr : &contact_schedule[0];
+  if (contact_schedule.size() != static_cast<std::size_t>(N))
+    return s.fallback(Status::InvalidInput, "run(): contact_schedule must have horizonLength() entries", now);
+  if (!finite(state) || !finite(cmd) || !finite(feet))
+    return s.fallback(Status::InvalidInput, "run(): state, command or foot positions contain NaN or Inf", now);
+  std::copy(contact_schedule.begin(), contact_schedule.end(), s.contact.begin());
+  detail::predictFeet(s.config, state, cmd, s.contact.data(), N, feet, s.feet.data());
   return s.solve(state, cmd);
 }
 
