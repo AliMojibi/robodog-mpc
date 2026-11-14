@@ -7,6 +7,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # ---- acados (not a ROS package): found through the environment variable ACADOS_SOURCE_DIR ----
@@ -48,6 +49,7 @@ list(FILTER SOLVER_SOURCES EXCLUDE REGEX "/(main_|acados_sim_solver_)[^/]*\\.c$"
 add_library(${PROJECT_NAME} SHARED
   src/config.cpp
   src/codegen_check.cpp
+  src/nmpc_solver.cpp
   ${SOLVER_SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES
   CXX_STANDARD 17
@@ -61,7 +63,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--disable-new-dtags")
 target_compile_options(${PROJECT_NAME} PRIVATE    # warnings for our C++ code only, not the generated C code
   "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>")
-# Our headers are public; acados and yaml-cpp are PRIVATE: users of this library never see their types.
+# Our headers are public and use Eigen (PUBLIC); acados and yaml-cpp are PRIVATE: users never see their types.
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>")
@@ -74,6 +76,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
   "${ACADOS_DIR}/lib/libacados.so" "${ACADOS_DIR}/lib/libhpipm.so" "${ACADOS_DIR}/lib/libblasfeo.so" m
   yaml-cpp)
+target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen)
 
 # ---- install ----
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets
@@ -85,10 +88,13 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})   # -> install/robod
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_config test/test_config.cpp)
-  target_link_libraries(test_config ${PROJECT_NAME})
-  target_compile_definitions(test_config PRIVATE
-    CONFIG_YAML="${CMAKE_CURRENT_SOURCE_DIR}/config/config.yaml")
+  ament_add_gtest(test_nmpc_solver test/test_nmpc_solver.cpp)
+  foreach(test test_config test_nmpc_solver)
+    target_link_libraries(${test} ${PROJECT_NAME})
+    target_compile_definitions(${test} PRIVATE CONFIG_YAML="${CMAKE_CURRENT_SOURCE_DIR}/config/config.yaml")
+  endforeach()
 endif()
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)   # other packages: robodog_nmpc::robodog_nmpc
+ament_export_dependencies(Eigen3)                                 # our public headers include Eigen
 ament_package()

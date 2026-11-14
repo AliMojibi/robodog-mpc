@@ -3,51 +3,22 @@
 // test_generate_solver.py (Python validator), so both validators are checked against one list.
 #include <gtest/gtest.h>
 
-#include <unistd.h>
-
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
-#include <regex>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "robodog_nmpc/config.hpp"
+#include "test_helpers.hpp"
 
 using robodog_nmpc::Config;
 using robodog_nmpc::ConfigError;
 using robodog_nmpc::loadConfig;
+using test_helpers::baseText;
+using test_helpers::withValue;
+using test_helpers::writeTemp;
 
 namespace {
-
-std::string readFile(const std::string& path) {
-  std::ifstream f(path);
-  std::stringstream s;
-  s << f.rdbuf();
-  return s.str();
-}
-
-const std::string& baseText() {
-  static const std::string text = readFile(CONFIG_YAML);
-  return text;
-}
-
-// The config text with the value of `key` (first line "<indent>key: ...") replaced; comments are kept.
-std::string withValue(const std::string& key, const std::string& value, std::string text = baseText()) {
-  const std::regex line("(\\n\\s+" + key + ":)[^#\\n]*");
-  std::smatch m;
-  if (!std::regex_search(text, m, line)) throw std::runtime_error("test bug: key not found: " + key);
-  return text.replace(m.position(0), m.length(0), m.str(1) + " " + value + "   ");
-}
-
-std::string writeTemp(const std::string& text) {
-  static int counter = 0;
-  const auto path = std::filesystem::temp_directory_path() /
-                    ("robodog_nmpc_test_config_" + std::to_string(::getpid()) + "_" + std::to_string(counter++) + ".yaml");
-  std::ofstream(path) << text;
-  return path.string();
-}
 
 // Loading `text` must fail with a message containing every fragment; returns the message.
 std::string expectRejected(const std::string& text, const std::vector<std::string>& fragments) {

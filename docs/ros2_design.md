@@ -233,11 +233,14 @@ public:
   // Load + validate config.yaml, check it against the generated solver, create the acados solver.
   Status initialize(const std::string& config_path);
 
-  // (a) simple form: contact flags held over the whole horizon; current foot positions held,
-  //     future footholds of feet that touch down predicted with the Raibert heuristic.
+  // (a) task-literal form: contact flags and foot positions held over the whole horizon
+  //     (no touchdown is ever predicted, so no foothold heuristic is needed).
   Status run(const State& state, const Command& cmd, const Contact& contact, const FootPositions& feet);
 
-  // (b) full form: a contact schedule and planned foot positions for every horizon node.
+  // (b) contact schedule (N entries) + current foot positions only: footholds of feet that touch down
+  //     later in the horizon are predicted with the Raibert heuristic (Eq. 33).          [not implemented yet]
+
+  // (c) full form: a contact schedule and planned foot positions for every horizon node.
   Status run(const State& state, const Command& cmd,
              const std::vector<Contact>& contact_schedule,          // N entries
              const std::vector<FootPositions>& foot_plan);          // N + 1 entries
@@ -352,7 +355,7 @@ const auto& sol = mpc.getSolution();   // sol.forces[0..3]: FR, FL, RR, RL, worl
 | B | finding acados | `ACADOS_SOURCE_DIR` + RPATH (no `LD_LIBRARY_PATH` needed at runtime) |
 | C | stale solver protection | **decided:** `srbd_nmpc_codegen_config.h` (list macro), every `[codegen]` key compared literally at `initialize()` |
 | D | commit `solver/` | **yes, `.c`/`.h` only**, plus a regenerate-and-compare test |
-| E | vector types | fixed-size Eigen (`Eigen::Vector3d`) |
-| F | error handling | `Status` return values, no exceptions in `run()` |
-| G | solver failure | return `SolverFailed` + previous plan's next step |
+| E | vector types | **decided:** fixed-size Eigen (`Eigen::Vector3d`) |
+| F | error handling | **decided:** `Status` return values + `errorMessage()`, no exceptions out of the class |
+| G | solver failure | **decided:** return `SolverFailed` + previous plan's next step (zero forces if there is none) |
 | H | where the workspace lives | e.g. `~/ros2_ws/src/robodog-mpc` (a clone or a symlink to this repo) |
