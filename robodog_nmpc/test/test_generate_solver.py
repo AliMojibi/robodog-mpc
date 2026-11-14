@@ -89,6 +89,17 @@ class GenerateSolverTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(d, 'libacados_ocp_solver_srbd_nmpc.so')))
         return macros, js, md5
 
+    def codegen_config(self):
+        """Entries of srbd_nmpc_codegen_config.h as {'group.key': value} (int, float or str)."""
+        with open(os.path.join(PKG, TEST_DIR, 'srbd_nmpc_codegen_config.h')) as f:
+            text = f.read()
+        conv = {'INT': int, 'DOUBLE': float, 'STRING': lambda s: s.strip('"')}
+        entries = re.findall(r'^\s+(INT|DOUBLE|STRING)\("(\w+)", "(\w+)", ("?[\w.+-]+"?)\)', text, re.M)
+        out = {f'{g}.{k}': conv[t](v) for t, g, k, v in entries}
+        self.assertEqual(len(out), len(entries), 'duplicate entry in the codegen-config header')
+        self.assertEqual(len(entries), text.count('("'), 'header entry the test could not parse')
+        return out
+
     @staticmethod
     def set(**groups):
         def edit(cfg):
@@ -104,6 +115,20 @@ class GenerateSolverTest(unittest.TestCase):
         self.assertEqual((m['N'], m['NX'], m['NU'], m['NP'], m['NH'], m['NH0'], m['NY'], m['NYN']),
                          (16, 12, 12, 17, 64, 64, 19, 7))
         self.assertAlmostEqual(js['solver_options']['tf'], 0.4)
+        # codegen-config header: every [codegen] setting except export_dir, values as in config.yaml
+        cc, p = self.codegen_config(), params(BASE)
+        expected = (['horizon.N', 'horizon.dt', 'friction.model', 'friction.polygon_sides', 'codegen.solver_name']
+                    + [f'solver.{k}' for k in p['solver']])
+        self.assertEqual(sorted(cc), sorted(expected))
+        for name, value in cc.items():
+            group, key = name.split('.')
+            self.assertEqual(value, p[group][key], name)
+        self.assertIsInstance(cc['horizon.dt'], float)
+        # nothing machine-specific in the files that get committed (generated .c/.h and the marker)
+        d = os.path.join(PKG, TEST_DIR)
+        for path in glob.glob(os.path.join(d, '**', '*.[ch]'), recursive=True) + [os.path.join(d, '.generated_by_generate_solver')]:
+            with open(path) as f:
+                self.assertNotIn(os.path.expanduser('~'), f.read(), os.path.relpath(path, d))
         self.assertEqual(self.generate().returncode, 0)          # regenerate over the previous output
         self.assertEqual(self.generated()[2], md5_first, 'same config must give identical code')
 
@@ -113,15 +138,26 @@ class GenerateSolverTest(unittest.TestCase):
         m, js, _ = self.generated()
         self.assertEqual(m['N'], 20)
         self.assertAlmostEqual(js['solver_options']['tf'], 0.4)
+        cc = self.codegen_config()
+        self.assertEqual((cc['horizon.N'], cc['horizon.dt']), (20, 0.02))
+        # an integer dt in the YAML must still be written as a double
+        self.assertEqual(self.generate(self.set(horizon={'N': 4, 'dt': 1})).returncode, 0)
+        self.assertEqual(self.codegen_config()['horizon.dt'], 1.0)
+        with open(os.path.join(PKG, TEST_DIR, 'srbd_nmpc_codegen_config.h')) as f:
+            self.assertIn('DOUBLE("horizon", "dt", 1.0)', f.read())
 
     @unittest.skipUnless(HAVE_ACADOS, 'ACADOS_SOURCE_DIR not set')
     def test_friction_models(self):
-        for edit, nh, ng in [(self.set(friction={'polygon_sides': 8}), 32, 0),
-                             (self.set(friction={'model': 'cone'}), 4, 0),
-                             (self.set(friction={'model': 'pyramid', 'mu': 0.5}), 0, 16)]:
+        for edit, nh, ng, model, sides, mu in [
+                (self.set(friction={'polygon_sides': 8}), 32, 0, 'polygon', 8, None),
+                (self.set(friction={'model': 'cone'}), 4, 0, 'cone', 16, None),
+                (self.set(friction={'model': 'pyramid', 'mu': 0.5}), 0, 16, 'pyramid', 16, 0.5)]:
             self.assertEqual(self.generate(edit).returncode, 0)
             m, js, _ = self.generated()
             self.assertEqual((m['NH'], m['NH0'], m['NG']), (nh, nh, ng))
+            cc = self.codegen_config()                               # mu is listed only when compiled in
+            self.assertEqual((cc['friction.model'], cc['friction.polygon_sides'], cc.get('friction.mu')),
+                             (model, sides, mu))
         self.assertEqual(js['constraints']['D'][0][:3], [1.0, 0.0, -0.5])   # pyramid: mu compiled in
 
     @unittest.skipUnless(HAVE_ACADOS, 'ACADOS_SOURCE_DIR not set')

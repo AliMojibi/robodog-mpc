@@ -134,9 +134,23 @@ never acados types. They therefore do not need acados include paths themselves.
 
 CMake fails with a clear message if `solver/acados_solver_srbd_nmpc.h` is missing ("run
 scripts/generate_solver.py first"). To catch a **stale** solver (config changed, solver not regenerated),
-`generate_solver.py` additionally writes `solver/srbd_nmpc_codegen_config.h` with the `[codegen]` values it used
-(N, dt, friction model, polygon sides, solver type). At `initialize()` the C++ class compares them with the
-YAML and refuses to start on a mismatch.
+`generate_solver.py` additionally writes `solver/srbd_nmpc_codegen_config.h` with the `[codegen]` values it used,
+as one list macro:
+
+```c
+#define SRBD_NMPC_CODEGEN_CONFIG(INT, DOUBLE, STRING) \
+    INT("horizon", "N", 16) \
+    DOUBLE("horizon", "dt", 0.025) \
+    STRING("friction", "model", "polygon") \
+    ...   /* all [codegen] keys except codegen.export_dir; friction.mu only for the pyramid model */
+```
+
+At `initialize()` the C++ class expands this macro, compares **every** entry literally with the YAML, and
+refuses to start (`SolverMismatch`) listing all differing keys. The key list lives only in `generate_solver.py`
+(`CODEGEN_KEYS`), so the C++ side needs no copy of it. Doubles are written with Python's `repr()` (exact round
+trip), so `==` is safe. Dimensions (NX, NU, NP) are additionally checked at compile time with `static_assert`.
+Not covered: changes to the model/cost code in `scripts/derivation/` without regenerating; the
+regenerate-and-compare test of Decision D catches those.
 
 ### Decision D (open): commit `solver/` to git?
 
@@ -331,7 +345,7 @@ const auto& sol = mpc.getSolution();   // sol.forces[0..3]: FR, FL, RR, RL, worl
 |---|---|---|
 | A | generated code: separate `.so` or compiled into our library | **compile into our library** |
 | B | finding acados | `ACADOS_SOURCE_DIR` + RPATH (no `LD_LIBRARY_PATH` needed at runtime) |
-| C | stale solver protection | `srbd_nmpc_codegen_config.h` compared at `initialize()` |
+| C | stale solver protection | **decided:** `srbd_nmpc_codegen_config.h` (list macro), every `[codegen]` key compared literally at `initialize()` |
 | D | commit `solver/` | **yes, `.c`/`.h` only**, plus a regenerate-and-compare test |
 | E | vector types | fixed-size Eigen (`Eigen::Vector3d`) |
 | F | error handling | `Status` return values, no exceptions in `run()` |
