@@ -183,6 +183,7 @@ struct NmpcSolver::Impl {
       if (!have_plan || (contact_now && !(*contact_now)[leg])) solution.forces[leg].setZero();
     }
     solution.status = status;
+    solution.plan_age = have_plan ? steps_since_plan : -1;
     error = message;  // literal shorter than the reserved capacity: no allocation
     return status;
   }
@@ -283,6 +284,17 @@ struct NmpcSolver::Impl {
     have_plan = true;
     steps_since_plan = 0;
     for (int leg = 0; leg < kNumFeet; ++leg) solution.forces[leg] = forceOf(U_plan[0], contact[0], leg);
+    for (int k = 0; k <= N; ++k) {
+      const auto& x = X_plan[k];
+      State& p = solution.predicted_states[k];
+      p.rpy = Eigen::Vector3d(x[0], x[1], x[2]);
+      p.position = Eigen::Vector3d(x[3], x[4], x[5]);
+      p.angular_velocity = Eigen::Vector3d(x[6], x[7], x[8]);
+      p.linear_velocity = Eigen::Vector3d(x[9], x[10], x[11]);
+      if (k < N)
+        for (int leg = 0; leg < kNumFeet; ++leg) solution.predicted_forces[k][leg] = forceOf(U_plan[k], contact[k], leg);
+    }
+    solution.plan_age = 0;
     solution.status = Status::Ok;
     error.clear();
     return Status::Ok;
@@ -335,6 +347,8 @@ Status NmpcSolver::initialize(const std::string& config_path) {
   s.nlp_solver = srbd_nmpc_acados_get_nlp_solver(s.capsule);
 
   s.applyRuntimeConfig();
+  s.solution.predicted_states.assign(N + 1, State{});
+  s.solution.predicted_forces.assign(N, Solution{}.forces);
   s.initialized = true;
   s.error.clear();
   return Status::Ok;

@@ -284,22 +284,104 @@ TEST(Run, SolverFailureFallbackAndRecovery) {
   EXPECT_GT(mpc.getSolution().forces[1].z(), 0.0);                   // FL in stance
 }
 
-TEST(Run, Timing) {
+TEST(Run, PredictedTrajectory) {
   NmpcSolver mpc;
   ASSERT_EQ(mpc.initialize(CONFIG_YAML), Status::Ok);
-  std::vector<double> t;
-  int failures = 0;
-  for (int i = 0; i < 1000; ++i) {
-    const Status st = harshStep(mpc, i);
-    ASSERT_TRUE(st == Status::Ok || st == Status::SolverFailed) << "step " << i;
+  EXPECT_EQ(mpc.getSolution().plan_age, -1);
+  ASSERT_EQ(mpc.getSolution().predicted_states.size(), 17u);   // sized by initialize()
+  ASSERT_EQ(mpc.getSolution().predicted_forces.size(), 16u);
+  solveRepeatedly(mpc, standing(), Command{}, {true, false, false, true}, 3);
+  const auto& sol = mpc.getSolution();
+  EXPECT_EQ(sol.plan_age, 0);
+  EXPECT_EQ(sol.predicted_states[0].position, standing().position);       // x_0 = measured state
+  for (int leg = 0; leg < 4; ++leg) EXPECT_EQ(sol.predicted_forces[0][leg], sol.forces[leg]);   // u_0 = output
+  for (const auto& f : sol.predicted_forces) EXPECT_EQ(f[1], Eigen::Vector3d::Zero());          // FL in swing
+  EXPECT_LT(sol.predicted_states[16].position.z(), 0.45);   // two feet only: the body sags a little over 0.4 s
+}
+
+// Closed loop in C++: the "robot" follows the model exactly (the next measured state is the plan's x_1, i.e. one
+// RK4 step of the solver's own model). Not a substitute for a simulation, but realistic inputs for timing and a
+// check that the commands are tracked. Scenario: stand, trot in place, forward, forward + turn, forward + sideways,
+// trot in place. Feet: form (b); a foot lands on the foothold that was predicted for it.
+TEST(Run, ClosedLoopTrackingAndTiming) {
+  NmpcSolver mpc;
+  ASSERT_EQ(mpc.initialize(CONFIG_YAML), Status::Ok);
+  const Config& c = mpc.config();
+  const int n = mpc.horizonLength();
+  const double dt = c.horizon.dt;
+  struct Phase { double t, vx, vy, wz; };
+  const std::vector<Phase> scenario = {{0.0, 0, 0, 0}, {1.5, 0.5, 0, 0}, {4.0, 0.5, 0, 0.6}, {6.0, 0.5, 0.2, 0}, {8.0, 0, 0, 0}};
+  auto command = [&](int i) {
+    Command cmd;
+    for (const auto& p : scenario)
+      if (p.t <= i * dt + 1e-9) cmd = Command{p.vx, p.vy, p.wz};
+    return cmd;
+  };
+  auto contact = [&](int i) -> Contact {   // all feet down until 0.5 s, then trot, pairs switch every 0.1 s
+    if (i < 20) return {true, true, true, true};
+    const bool a = ((i - 20) / 4) % 2 == 0;
+    return {a, !a, !a, a};
+  };
+  auto headingVelocity = [](const State& s) {   // Rz(yaw)^T v
+    return Eigen::Rotation2Dd(-s.rpy.z()) * s.linear_velocity.head<2>();
+  };
+
+  State x = standing(c.robot.nominal_height);
+  FootPositions feet = feetUnderHips(c);
+  std::vector<FootPositions> predicted(n + 1, feet);
+  std::vector<double> times;
+  int failures = 0, qp_limit = 0;
+  const int steps = 400;   // 10 s
+  for (int i = 0; i < steps; ++i) {
+    std::vector<Contact> schedule(n);
+    for (int k = 0; k < n; ++k) schedule[k] = contact(i + k);
+    for (int leg = 0; leg < 4; ++leg)   // touchdown now: the foot lands where it was predicted one step ago
+      if (schedule[0][leg] && i > 0 && !contact(i - 1)[leg]) feet[leg] = predicted[1][leg];
+    const Command cmd = command(i);
+    robodog_nmpc::detail::predictFeet(c, x, cmd, schedule.data(), n, feet, predicted.data());
+
+    const Status st = mpc.run(x, cmd, schedule, feet);
+    const auto& sol = mpc.getSolution();
+    ASSERT_TRUE(st == Status::Ok || st == Status::SolverFailed) << "step " << i << ": " << mpc.errorMessage();
+    times.push_back(sol.solve_time_ms);
     failures += st == Status::SolverFailed;
-    for (const auto& f : mpc.getSolution().forces) ASSERT_TRUE(f.allFinite()) << "step " << i;
-    t.push_back(mpc.getSolution().solve_time_ms);
+    qp_limit += sol.qp_iterations >= c.solver.qp_solver_iter_max;
+    if (st == Status::Ok) {
+      for (int leg = 0; leg < 4; ++leg) {
+        const Eigen::Vector3d& f = sol.forces[leg];
+        if (!schedule[0][leg]) {
+          ASSERT_EQ(f, Eigen::Vector3d::Zero()) << "step " << i << ", swing leg " << leg;
+          continue;
+        }
+        ASSERT_GE(f.z(), c.friction.f_min - 1e-6) << "step " << i << ", leg " << leg;
+        ASSERT_LE(f.z(), c.friction.f_max + 1e-6) << "step " << i << ", leg " << leg;
+        ASSERT_LE(f.head<2>().norm(), c.friction.mu * f.z() + 1e-6) << "step " << i << ", leg " << leg;
+      }
+    }
+    // the robot: the plan's next state (after a failure: the next state of the plan the fallback forces come from)
+    x = sol.predicted_states[std::min(sol.plan_age + 1, n)];
+    ASSERT_TRUE(x.position.allFinite() && x.linear_velocity.allFinite()) << "step " << i;
+    EXPECT_NEAR(x.position.z(), c.robot.nominal_height, 0.03) << "step " << i;
+    EXPECT_LT(x.rpy.head<2>().cwiseAbs().maxCoeff(), 0.1) << "roll/pitch, step " << i;
+
+    const double t = (i + 1) * dt;   // checks at the end of each phase
+    if (std::abs(t - 4.0) < 1e-9) {
+      EXPECT_NEAR(headingVelocity(x).x(), 0.5, 0.05) << "forward";
+      EXPECT_NEAR(headingVelocity(x).y(), 0.0, 0.05) << "forward";
+    }
+    if (std::abs(t - 6.0) < 1e-9) EXPECT_NEAR(x.angular_velocity.z(), 0.6, 0.06) << "turn";
+    if (std::abs(t - 8.0) < 1e-9) {
+      EXPECT_NEAR(headingVelocity(x).x(), 0.5, 0.05) << "forward + sideways";
+      EXPECT_NEAR(headingVelocity(x).y(), 0.2, 0.05) << "forward + sideways";
+    }
+    if (std::abs(t - 10.0) < 1e-9) EXPECT_LT(x.linear_velocity.norm(), 0.05) << "stop";
   }
-  std::sort(t.begin(), t.end());
-  std::cout << "[ timing   ] 1000 steps (harsh scenario, " << failures << " solver failures): median " << t[500]
-            << " ms, 99% " << t[990] << " ms, max " << t.back() << " ms" << std::endl;
-  EXPECT_LT(t[500], 5.0);   // generous: ~1.5 ms expected on a desktop CPU
+  std::sort(times.begin(), times.end());
+  std::cout << "[ timing   ] closed loop, " << steps << " steps: median " << times[steps / 2] << " ms, 99% "
+            << times[steps * 99 / 100] << " ms, max " << times.back() << " ms; " << failures << " solver failure(s), "
+            << qp_limit << " QP(s) at the iteration limit" << std::endl;
+  EXPECT_LT(times[steps / 2], 5.0);   // generous: ~1.5 ms expected on a desktop CPU
+  EXPECT_LE(failures, steps / 20);    // the fallback covers single failures; many would mean a real problem
 }
 
 // ---------------- form (b): foothold prediction (Raibert) ----------------

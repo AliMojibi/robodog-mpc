@@ -4,6 +4,7 @@
 #include <Eigen/Core>
 
 #include <array>
+#include <vector>
 
 namespace robodog_nmpc {
 
@@ -57,6 +58,12 @@ struct Solution {
   int qp_iterations{0};      // == solver.qp_solver_iter_max: the QP stopped at its iteration limit (acados still
                              // reports success then; the forces are usable but less accurate)
   double solve_time_ms{0.0};
+
+  // The last successful plan (for logging / debugging), sized in initialize(): no allocation in run().
+  std::vector<State> predicted_states;   // x_0 .. x_N (N + 1)
+  std::vector<Forces> predicted_forces;  // u_0 .. u_{N-1} (N), swing feet exactly 0
+  int plan_age{-1};                      // run() calls since that plan was computed: 0 after Ok, -1 = no plan yet;
+                                         // predicted_states[plan_age] is "now" in that plan
 };
 
 }  // namespace robodog_nmpc

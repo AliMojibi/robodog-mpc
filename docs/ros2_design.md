@@ -219,9 +219,12 @@ using FootPositions = std::array<Eigen::Vector3d, 4>; // world frame [m]
 struct Solution {
   std::array<Eigen::Vector3d, 4> forces;   // ground reaction forces to apply now (u_0), WORLD frame [N]
   Status status;                           // see section 6
-  int qp_iterations;
+  int acados_status;                       // 0 = success
+  int qp_iterations;                       // == qp_solver_iter_max: the QP stopped at its limit (still "success")
   double solve_time_ms;
-  // optional, for logging/debugging: predicted states and forces over the horizon
+  std::vector<State> predicted_states;     // last successful plan, x_0..x_N (sized in initialize())
+  std::vector<Forces> predicted_forces;    // u_0..u_{N-1}, swing feet exactly 0
+  int plan_age;                            // steps since that plan was computed (0 after Ok, -1 = none)
 };
 ```
 
