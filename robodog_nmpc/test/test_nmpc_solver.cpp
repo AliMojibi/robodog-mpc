@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -397,4 +399,59 @@ TEST(Run, FormBInvalidInput) {
   EXPECT_EQ(mpc.run(standing(), Command{}, std::vector<Contact>{}, feet), Status::InvalidInput);
   feet[3].x() = std::nan("");
   EXPECT_EQ(mpc.run(standing(), Command{}, trotSchedule(), feet), Status::InvalidInput);
+}
+
+// ---------------- comparison with the Python acados interface ----------------
+
+// test/reference/closed_loop.txt is written by test/generate_reference.py: a closed loop (stand, trot in place,
+// forward, forward + turn) with an independent Python version of run() form (b) on the acados Python interface.
+// The C++ class must reproduce every step: status, acados status, QP iterations and forces.
+TEST(PythonReference, ClosedLoop) {
+  std::ifstream file(REFERENCE_DIR "/closed_loop.txt");
+  ASSERT_TRUE(file.good()) << "missing " REFERENCE_DIR "/closed_loop.txt (run test/generate_reference.py)";
+  NmpcSolver mpc;
+  ASSERT_EQ(mpc.initialize(CONFIG_YAML), Status::Ok) << mpc.errorMessage();
+  const int n = mpc.horizonLength();
+
+  int steps = 0, failures = 0;
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream in(line);
+    int step;
+    State s;
+    Command cmd;
+    std::string schedule_hex;
+    FootPositions feet;
+    int status, acados_status, qp_iterations;
+    std::array<double, 12> forces;
+    in >> step;
+    for (Eigen::Vector3d* v : {&s.rpy, &s.position, &s.angular_velocity, &s.linear_velocity}) in >> (*v)[0] >> (*v)[1] >> (*v)[2];
+    in >> cmd.vx >> cmd.vy >> cmd.yaw_rate >> schedule_hex;
+    for (auto& f : feet) in >> f[0] >> f[1] >> f[2];
+    in >> status >> acados_status >> qp_iterations;
+    for (double& f : forces) in >> f;
+    ASSERT_FALSE(in.fail()) << "cannot parse line: " << line.substr(0, 60);
+    ASSERT_EQ(static_cast<int>(schedule_hex.size()), n) << "step " << step;
+
+    std::vector<Contact> schedule(n);
+    for (int k = 0; k < n; ++k) {
+      const int bits = std::stoi(schedule_hex.substr(k, 1), nullptr, 16);
+      for (int leg = 0; leg < 4; ++leg) schedule[k][leg] = (bits >> leg) & 1;
+    }
+
+    const Status st = mpc.run(s, cmd, schedule, feet);
+    const auto& sol = mpc.getSolution();
+    ASSERT_EQ(static_cast<int>(st), status) << "step " << step << ": " << mpc.errorMessage();
+    EXPECT_EQ(sol.acados_status, acados_status) << "step " << step;
+    EXPECT_EQ(sol.qp_iterations, qp_iterations) << "step " << step;
+    for (int i = 0; i < 12; ++i)
+      ASSERT_NEAR(sol.forces[i / 3][i % 3], forces[i], 1e-9 * (1.0 + std::abs(forces[i])))
+          << "step " << step << ", force component " << i;
+    ++steps;
+    failures += st == Status::SolverFailed;
+  }
+  EXPECT_GE(steps, 100) << "reference file too short";
+  std::cout << "[ python   ] " << steps << " steps identical to the Python reference (" << failures
+            << " solver failure(s) with fallback)" << std::endl;
 }

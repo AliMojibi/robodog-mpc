@@ -153,6 +153,18 @@ class GenerateSolverTest(unittest.TestCase):
         self.assertEqual([f for f in sorted(fresh) if committed[f] != fresh[f]], [], f'files differ. {hint}')
 
     @unittest.skipUnless(HAVE_ACADOS, 'ACADOS_SOURCE_DIR not set')
+    def test_committed_reference_is_up_to_date(self):
+        """test/reference/closed_loop.txt (input of the C++ test PythonReference.ClosedLoop) must be exactly what
+        test/generate_reference.py produces with the current config.yaml, OCP and plant."""
+        out = os.path.join(self.tmp, 'closed_loop.txt')
+        r = subprocess.run([sys.executable, os.path.join(PKG, 'test', 'generate_reference.py'), '--out', out],
+                           cwd=self.tmp, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        with open(out) as f, open(os.path.join(PKG, 'test', 'reference', 'closed_loop.txt')) as g:
+            self.assertTrue(f.read() == g.read(),
+                            'test/reference/closed_loop.txt is out of date: run test/generate_reference.py and commit it')
+
+    @unittest.skipUnless(HAVE_ACADOS, 'ACADOS_SOURCE_DIR not set')
     def test_horizon(self):
         self.assertEqual(self.generate(self.set(horizon={'N': 20, 'dt': 0.02})).returncode, 0)
         m, js, _ = self.generated()

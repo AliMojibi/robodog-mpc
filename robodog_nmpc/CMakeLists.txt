@@ -94,7 +94,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_nmpc_solver test/test_nmpc_solver.cpp)
   foreach(test test_config test_nmpc_solver)
     target_link_libraries(${test} ${PROJECT_NAME})
-    target_compile_definitions(${test} PRIVATE CONFIG_YAML="${CMAKE_CURRENT_SOURCE_DIR}/config/config.yaml")
+    target_compile_definitions(${test} PRIVATE CONFIG_YAML="${CMAKE_CURRENT_SOURCE_DIR}/config/config.yaml"
+                                               REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/reference")
   endforeach()
 endif()
 
