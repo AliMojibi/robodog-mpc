@@ -47,6 +47,7 @@ list(FILTER SOLVER_SOURCES EXCLUDE REGEX "/(main_|acados_sim_solver_)[^/]*\\.c$"
 # ---- the library ----
 add_library(${PROJECT_NAME} SHARED
   src/config.cpp
+  src/codegen_check.cpp
   ${SOLVER_SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES
   CXX_STANDARD 17

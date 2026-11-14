@@ -4,6 +4,8 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#include <variant>
+#include <vector>
 
 namespace robodog_nmpc {
 
@@ -57,5 +59,20 @@ class ConfigError : public std::runtime_error {
 // every group and key present, no unknown or duplicate keys, types, ranges, list lengths, f_min < f_max.
 // Additionally, all numbers must be finite. Throws ConfigError.
 Config loadConfig(const std::string& path);
+
+// Stale-solver check: compares the [codegen] settings the solver in this library was generated with
+// (solver/srbd_nmpc_codegen_config.h) with `config`. Returns one line per difference, e.g.
+// "horizon.dt: config.yaml 0.02, generated solver 0.025"; empty if they match.
+std::vector<std::string> codegenMismatches(const Config& config);
+
+namespace detail {
+// One entry of the codegen-config header. Exposed for tests only.
+struct CodegenEntry {
+  std::string group, key;
+  std::variant<long, double, std::string> value;
+};
+std::vector<CodegenEntry> generatedCodegenEntries();
+std::vector<std::string> compareCodegen(const Config& config, const std::vector<CodegenEntry>& entries);
+}  // namespace detail
 
 }  // namespace robodog_nmpc

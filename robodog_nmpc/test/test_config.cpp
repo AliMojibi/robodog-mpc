@@ -198,3 +198,69 @@ TEST(Config, FormatDifferenceToPython) {
   // text and generate_solver.py rejects it, so a wrong value can never be used silently.
   EXPECT_EQ(load(withValue("w_force", "1e-6")).cost.w_force, 1.0e-6);
 }
+
+// ---------------- stale-solver check: config.yaml vs. the settings the compiled-in solver was generated with ----
+
+using robodog_nmpc::codegenMismatches;
+using robodog_nmpc::detail::CodegenEntry;
+using robodog_nmpc::detail::compareCodegen;
+using robodog_nmpc::detail::generatedCodegenEntries;
+
+TEST(CodegenCheck, HeaderHasTheExpectedEntries) {   // the solver in solver/ is generated from config.yaml
+  std::vector<std::string> names;
+  for (const auto& e : generatedCodegenEntries()) names.push_back(e.group + "." + e.key);
+  const std::vector<std::string> expected = {
+      "horizon.N", "horizon.dt", "friction.model", "friction.polygon_sides", "solver.nlp_solver_type",
+      "solver.qp_solver", "solver.hessian_approx", "solver.integrator_type", "solver.sim_method_num_stages",
+      "solver.sim_method_num_steps", "solver.globalization", "solver.nlp_solver_max_iter",
+      "solver.qp_solver_iter_max", "codegen.solver_name"};   // friction.mu only for the pyramid model
+  EXPECT_EQ(names, expected);
+}
+
+TEST(CodegenCheck, RealConfigMatches) {
+  const auto m = codegenMismatches(loadConfig(CONFIG_YAML));
+  EXPECT_TRUE(m.empty()) << m.front();
+}
+
+TEST(CodegenCheck, RuntimeSettingsAreNotCompared) {
+  std::string text = withValue("mass", "30.0");
+  for (const auto& [key, value] : std::vector<std::pair<std::string, std::string>>{
+           {"mu", "0.4"}, {"f_min", "5.0"}, {"f_max", "500.0"}, {"w_height", "10.0"}, {"nominal_height", "0.3"},
+           {"export_dir", "other_folder"}})
+    text = withValue(key, value, text);
+  const auto m = codegenMismatches(load(text));
+  EXPECT_TRUE(m.empty()) << m.front();
+}
+
+TEST(CodegenCheck, EveryCodegenChangeIsReportedWithBothValues) {
+  std::string text = withValue("dt", "0.02");
+  text = withValue("model", "cone", text);
+  text = withValue("nlp_solver_max_iter", "30", text);
+  text = withValue("solver_name", "other_solver", text);
+  const auto m = codegenMismatches(load(text));
+  ASSERT_EQ(m.size(), 4u);
+  EXPECT_EQ(m[0], "horizon.dt: config.yaml 0.02, generated solver 0.025");
+  EXPECT_EQ(m[1], "friction.model: config.yaml cone, generated solver polygon");
+  EXPECT_EQ(m[2], "solver.nlp_solver_max_iter: config.yaml 30, generated solver 50");
+  EXPECT_EQ(m[3], "codegen.solver_name: config.yaml other_solver, generated solver srbd_nmpc");
+  // also the settings that do not change the generated code (strict rule: any [codegen] change -> regenerate)
+  EXPECT_EQ(codegenMismatches(load(withValue("polygon_sides", "8"))).size(), 1u);
+  EXPECT_EQ(codegenMismatches(load(withValue("N", "20"))).size(), 1u);
+}
+
+TEST(CodegenCheck, DoublesCompareExactly) {
+  EXPECT_TRUE(codegenMismatches(load(withValue("dt", "2.5e-2"))).empty());   // same double as 0.025
+  EXPECT_EQ(codegenMismatches(load(withValue("dt", "0.025000000000000001"))).size(), 0u);  // rounds to 0.025
+  EXPECT_EQ(codegenMismatches(load(withValue("dt", "0.02500000000001"))).size(), 1u);      // a different double
+}
+
+TEST(CodegenCheck, UnknownKeyAndTypeDifferenceAreMismatches) {
+  const Config c = loadConfig(CONFIG_YAML);
+  const auto m = compareCodegen(c, {CodegenEntry{"horizon", "N", 16L}, CodegenEntry{"horizon", "dt", 0.025},
+                                    CodegenEntry{"robot", "legs", 4L}, CodegenEntry{"horizon", "N", 16.0},
+                                    CodegenEntry{"robot", "mass", 43.0}});
+  ASSERT_EQ(m.size(), 2u);
+  EXPECT_EQ(m[0], "robot.legs: setting of the generated solver unknown to this library "
+                  "(library and scripts/generate_solver.py out of sync)");
+  EXPECT_EQ(m[1], "horizon.N: different type in config.yaml (16) and generated solver (16)");
+}
