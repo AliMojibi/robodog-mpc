@@ -23,6 +23,9 @@ notebooks/srbd_derivation.ipynb
 showcase/*.mp4
 robodog_nmpc/scripts/derivation/*.gif
 
+# editor settings (contain local paths)
+.vscode/
+
 # personal planning / assistant notes (local only)
 PLAN.md
 CLAUDE.md
