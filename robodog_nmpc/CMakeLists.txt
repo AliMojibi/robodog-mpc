@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(robodog_nmpc LANGUAGES C CXX)   # C: the generated acados solver code
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+# colcon passes no build type by default, which means no optimization (-O0): far too slow for the solver.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (default Release)" FORCE)
 endif()
 
 find_package(ament_cmake REQUIRED)
@@ -35,7 +36,39 @@ foreach(header acados_solver_${SOLVER_NAME}.h ${SOLVER_NAME}_codegen_config.h)
   endif()
 endforeach()
 
+# Sources: the same set as the generator's own solver library (Makefile target ocp_shared_lib), i.e. without
+# the example programs main_*.c and the stand-alone integrator acados_sim_solver_*.c. Globbed, because the
+# file set depends on the config (e.g. no constraint functions for the pyramid model); CONFIGURE_DEPENDS
+# re-collects the list on the next build after scripts/generate_solver.py has run.
+file(GLOB SOLVER_SOURCES CONFIGURE_DEPENDS "${SOLVER_DIR}/*.c" "${SOLVER_DIR}/${SOLVER_NAME}_*/*.c")
+list(FILTER SOLVER_SOURCES EXCLUDE REGEX "/(main_|acados_sim_solver_)[^/]*\\.c$")
+
+# ---- the library ----
+add_library(${PROJECT_NAME} SHARED ${SOLVER_SOURCES})
+set_target_properties(${PROJECT_NAME} PROPERTIES
+  C_STANDARD 99                          # as in the generated Makefile
+  INSTALL_RPATH "${ACADOS_DIR}/lib")     # find the acados libraries at runtime without LD_LIBRARY_PATH
+# The acados libraries have no search path of their own, and libacados.so needs libhpipm, libblasfeo and
+# libqpOASES_e. The default (new) DT_RUNPATH only covers our library's direct dependencies, so those would
+# not be found. The older DT_RPATH is also searched for the dependencies of the libraries we load.
+# (DT_RPATH takes priority over LD_LIBRARY_PATH: the acados the code was generated for is always used.)
+target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--disable-new-dtags")
+target_compile_options(${PROJECT_NAME} PRIVATE    # warnings for our C++ code only, not the generated C code
+  "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>")
+# acados is PRIVATE: users of this library only see our own headers, never acados types.
+target_include_directories(${PROJECT_NAME} PRIVATE
+  "${SOLVER_DIR}"
+  "${ACADOS_DIR}/include"
+  "${ACADOS_DIR}/include/acados"
+  "${ACADOS_DIR}/include/blasfeo/include"
+  "${ACADOS_DIR}/include/hpipm/include")
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  "${ACADOS_DIR}/lib/libacados.so" "${ACADOS_DIR}/lib/libhpipm.so" "${ACADOS_DIR}/lib/libblasfeo.so" m)
+
 # ---- install ----
+install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets
+  LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})   # -> install/robodog_nmpc/share/robodog_nmpc/config
 
+ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)   # other packages: robodog_nmpc::robodog_nmpc
 ament_package()

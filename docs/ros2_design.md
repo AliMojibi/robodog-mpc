@@ -109,7 +109,9 @@ Two options:
 | runtime paths | must find both `.so` files | simpler |
 
 **Proposal: (2).** CMake collects the generated sources with a glob (`solver/*.c`, `solver/srbd_nmpc_*/*.c`,
-excluding the example programs `main_*.c`) and compiles them together with our C++ files.
+excluding the example programs `main_*.c` and the stand-alone integrator `acados_sim_solver_*.c`, i.e. the same
+set as the generator's own `ocp_shared_lib`) and compiles them together with our C++ files. The glob uses
+`CONFIGURE_DEPENDS`, because the file set depends on the config (the pyramid model has no constraint functions).
 
 ### Decision B: finding acados
 
@@ -126,6 +128,9 @@ target_link_libraries(robodog_nmpc PUBLIC ${ACADOS_DIR}/lib/libacados.so ${ACADO
 
 **RPATH:** the acados library folder is written into our library (`INSTALL_RPATH`), so at runtime it finds
 `libacados.so` **without** `LD_LIBRARY_PATH`. This removes the most common "cannot open shared object file" error.
+It must be the older **DT_RPATH** (`-Wl,--disable-new-dtags`): the acados libraries carry no search path of their
+own, and the default DT_RUNPATH only covers our library's direct dependencies, so `libhpipm`, `libblasfeo` and
+`libqpOASES_e` (needed by `libacados`) would not be found. DT_RPATH also covers them.
 
 acados and the generated C headers are **PRIVATE**: users of our class only see our own headers (section 4),
 never acados types. They therefore do not need acados include paths themselves.
