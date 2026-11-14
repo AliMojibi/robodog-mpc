@@ -7,6 +7,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # ---- acados (not a ROS package): found through the environment variable ACADOS_SOURCE_DIR ----
 # Checked when CMake configures. After changing the environment, reconfigure:
@@ -44,8 +45,12 @@ file(GLOB SOLVER_SOURCES CONFIGURE_DEPENDS "${SOLVER_DIR}/*.c" "${SOLVER_DIR}/${
 list(FILTER SOLVER_SOURCES EXCLUDE REGEX "/(main_|acados_sim_solver_)[^/]*\\.c$")
 
 # ---- the library ----
-add_library(${PROJECT_NAME} SHARED ${SOLVER_SOURCES})
+add_library(${PROJECT_NAME} SHARED
+  src/config.cpp
+  ${SOLVER_SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
   C_STANDARD 99                          # as in the generated Makefile
   INSTALL_RPATH "${ACADOS_DIR}/lib")     # find the acados libraries at runtime without LD_LIBRARY_PATH
 # The acados libraries have no search path of their own, and libacados.so needs libhpipm, libblasfeo and
@@ -55,7 +60,10 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--disable-new-dtags")
 target_compile_options(${PROJECT_NAME} PRIVATE    # warnings for our C++ code only, not the generated C code
   "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>")
-# acados is PRIVATE: users of this library only see our own headers, never acados types.
+# Our headers are public; acados and yaml-cpp are PRIVATE: users of this library never see their types.
+target_include_directories(${PROJECT_NAME} PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include>")
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${SOLVER_DIR}"
   "${ACADOS_DIR}/include"
@@ -63,12 +71,23 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   "${ACADOS_DIR}/include/blasfeo/include"
   "${ACADOS_DIR}/include/hpipm/include")
 target_link_libraries(${PROJECT_NAME} PRIVATE
-  "${ACADOS_DIR}/lib/libacados.so" "${ACADOS_DIR}/lib/libhpipm.so" "${ACADOS_DIR}/lib/libblasfeo.so" m)
+  "${ACADOS_DIR}/lib/libacados.so" "${ACADOS_DIR}/lib/libhpipm.so" "${ACADOS_DIR}/lib/libblasfeo.so" m
+  yaml-cpp)
 
 # ---- install ----
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets
-  LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)
+  LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin INCLUDES DESTINATION include)
+install(DIRECTORY include/ DESTINATION include)                # -> #include <robodog_nmpc/config.hpp>
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})   # -> install/robodog_nmpc/share/robodog_nmpc/config
+
+# ---- tests (colcon test) ----
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_config test/test_config.cpp)
+  target_link_libraries(test_config ${PROJECT_NAME})
+  target_compile_definitions(test_config PRIVATE
+    CONFIG_YAML="${CMAKE_CURRENT_SOURCE_DIR}/config/config.yaml")
+endif()
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)   # other packages: robodog_nmpc::robodog_nmpc
 ament_package()

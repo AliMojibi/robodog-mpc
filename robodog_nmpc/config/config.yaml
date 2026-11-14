@@ -7,6 +7,12 @@
 #   [codegen]  compiled into the generated C solver  -> after changing it, rerun scripts/generate_solver.py
 #   [runtime]  read by the C++ class at initialize() -> takes effect without regenerating
 #
+# Format: this file is read by Python (PyYAML, code generation) and C++ (yaml-cpp, the solver class). Write
+# numbers in this standard form so both read the same value:
+#   integers: plain decimal, no leading zeros                      16
+#   reals:    decimal point, signed exponent if any                0.025   43.0   1.0e-6  (not 1e-6)
+#   no quotes around numbers, no underscores / hex / inf / nan, every key only once.
+#
 # Conventions: world frame z up; foot order FR, FL, RR, RL; commands (v_x, v_y, yaw rate) in the robot's
 # heading frame; output forces in the world frame. Default values: MIT Cheetah 3 (Di Carlo et al. 2018, Table I).
 

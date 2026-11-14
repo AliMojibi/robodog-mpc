@@ -10,6 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>eigen</depend>
   <depend>yaml-cpp</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
   <!-- acados is not a ROS package: it is found through ACADOS_SOURCE_DIR (see CMakeLists.txt) -->
 
   <export>
