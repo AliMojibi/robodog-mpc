@@ -30,5 +30,12 @@ robodog_nmpc/scripts/derivation/*.gif
 PLAN.md
 CLAUDE.md
 
-# generated acados C solver (output of robodog_nmpc/scripts/generate_solver.py)
-robodog_nmpc/solver/
+# generated acados C solver (output of robodog_nmpc/scripts/generate_solver.py): only the C sources/headers and
+# the marker file are committed (whitelist), so build output (.o, .so, json, Makefile, ...) can never slip in
+robodog_nmpc/solver/**
+!robodog_nmpc/solver/**/
+!robodog_nmpc/solver/**/*.c
+!robodog_nmpc/solver/**/*.h
+!robodog_nmpc/solver/.generated_by_generate_solver
+# test output of test_generate_solver.py
+robodog_nmpc/solver_test/

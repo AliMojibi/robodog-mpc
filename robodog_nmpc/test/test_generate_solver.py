@@ -133,6 +133,26 @@ class GenerateSolverTest(unittest.TestCase):
         self.assertEqual(self.generated()[2], md5_first, 'same config must give identical code')
 
     @unittest.skipUnless(HAVE_ACADOS, 'ACADOS_SOURCE_DIR not set')
+    def test_committed_solver_is_up_to_date(self):
+        """solver/ is committed to git (design decision D): it must be exactly what the committed config.yaml and
+        the current model code generate. Fails after a [codegen] or model change that was not regenerated."""
+        self.assertEqual(self.generate().returncode, 0)
+
+        def sources(folder):
+            files = glob.glob(os.path.join(folder, '**', '*.[ch]'), recursive=True)
+            files.append(os.path.join(folder, '.generated_by_generate_solver'))
+            out = {}
+            for path in files:
+                with open(path, 'rb') as f:
+                    out[os.path.relpath(path, folder)] = f.read()
+            return out
+
+        committed, fresh = sources(os.path.join(PKG, 'solver')), sources(os.path.join(PKG, TEST_DIR))
+        hint = 'solver/ is out of date: run scripts/generate_solver.py and commit solver/'
+        self.assertEqual(sorted(committed), sorted(fresh), f'different set of generated files. {hint}')
+        self.assertEqual([f for f in sorted(fresh) if committed[f] != fresh[f]], [], f'files differ. {hint}')
+
+    @unittest.skipUnless(HAVE_ACADOS, 'ACADOS_SOURCE_DIR not set')
     def test_horizon(self):
         self.assertEqual(self.generate(self.set(horizon={'N': 20, 'dt': 0.02})).returncode, 0)
         m, js, _ = self.generated()
