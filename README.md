@@ -9,6 +9,12 @@ Nonlinear MPC for quadruped locomotion based on the Single Rigid Body Dynamics (
 The paper freezes yaw and the foot lever arms to get a linear (convex) MPC. We keep the same
 model but leave those as functions of the state, which makes it nonlinear and suitable for NMPC.
 
+The repository contains the step-by-step derivation (Python: SymPy, CasADi, acados) and a **ROS 2 C++ package**
+with a standalone solver class: give it the measured state, the commanded velocity and yaw rate and the
+contact state of the feet; it returns the 3D ground reaction force of each foot
+([C++ / ROS 2 package](#c--ros-2-package-robodog_nmpc)). The mathematical formulation is in
+[docs/formulation.md](docs/formulation.md), the package design in [docs/ros2_design.md](docs/ros2_design.md).
+
 ![Closed-loop NMPC: stand, trot, forward, turn](showcase/robodog_nmpc.gif)
 
 *Closed-loop simulation (step 11): stand → trot in place → trot forward at 0.5 m/s → turn at 0.6 rad/s.
@@ -71,7 +77,10 @@ Tested versions:
 | SciPy / Matplotlib | 1.15.3 / 3.10.9 | plots, pendulum example |
 | imageio-ffmpeg | 0.8.1 | bundled ffmpeg for the showcase video |
 | PyYAML | 6.0.3 | reads `config.yaml` |
-| ROS 2 | Humble | C++ package (see Roadmap) |
+| ROS 2 | Humble | C++ package: `ament_cmake`, `colcon` |
+| Eigen | 3.4.0 | C++ package (`libeigen3-dev`) |
+| yaml-cpp | 0.7.0 | C++ package (`libyaml-cpp-dev`) |
+| GoogleTest | via `ament_cmake_gtest` | C++ tests |
 
 ## Running
 
@@ -100,21 +109,111 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/acados/lib
 ~/.venvs/robodog/bin/python step10_acados_ocp.py
 ```
 
-## Solver code generation (`robodog_nmpc/`)
+## Solver code generation (`robodog_nmpc/scripts/`)
 
 All parameters live in `robodog_nmpc/config/config.yaml` (ROS 2 parameter-file format). Each setting is
 tagged `[codegen]` (compiled into the solver: regenerate after changing it) or `[runtime]` (read by the
 C++ class at start-up). The script validates the whole file first and reports every problem at once.
 
+The generated C code in `robodog_nmpc/solver/` is **committed**, so building the C++ package needs only the
+acados C library. Regenerate it (and commit it) only after changing a `[codegen]` setting or the model:
+
 ```bash
 cd robodog_nmpc
 export ACADOS_SOURCE_DIR=$HOME/acados LD_LIBRARY_PATH=$HOME/acados/lib
-~/.venvs/robodog/bin/python scripts/generate_solver.py          # -> solver/ (C code + libacados_ocp_solver_srbd_nmpc.so)
+~/.venvs/robodog/bin/python scripts/generate_solver.py          # -> solver/ (C code + srbd_nmpc_codegen_config.h)
+~/.venvs/robodog/bin/python test/generate_reference.py          # -> test/reference/closed_loop.txt (C++ test data)
 ~/.venvs/robodog/bin/python -m unittest discover -s test -v     # workflow tests (~90 s)
 ```
 
 `scripts/srbd_ocp.py` builds the optimal control problem; the model, friction and cost are imported from
-the derivation steps 7–9 (single source of truth).
+the derivation steps 7–9 (single source of truth). The workflow tests check code generation for valid and
+invalid configs, that the output folder can never delete anything else, and that the committed `solver/` and
+the C++ test reference are exactly what the current config and model produce.
+
+## C++ / ROS 2 package (`robodog_nmpc/`)
+
+A ROS 2 (Humble) `ament_cmake` package with a standalone class `robodog_nmpc::NmpcSolver`: **no node, no
+topics**; link it into your controller. The generated acados code is compiled into `librobodog_nmpc.so`.
+
+### Build and test
+
+```bash
+# prerequisites: ROS 2 Humble, acados v0.6.0 (see above), Eigen and yaml-cpp:
+sudo apt install libeigen3-dev libyaml-cpp-dev ros-humble-ament-cmake-gtest
+
+mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
+git clone https://github.com/AliMojibi/robodog-mpc.git
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+export ACADOS_SOURCE_DIR=$HOME/acados          # needed for building only
+colcon build --packages-select robodog_nmpc
+colcon test --packages-select robodog_nmpc && colcon test-result --verbose
+```
+
+`LD_LIBRARY_PATH` is not needed: the acados library folder is stored in `librobodog_nmpc.so` (RPATH), also for
+programs that link against it.
+
+### Use
+
+```cmake
+find_package(robodog_nmpc REQUIRED)
+target_link_libraries(my_controller robodog_nmpc::robodog_nmpc)
+```
+
+```cpp
+#include <robodog_nmpc/nmpc_solver.hpp>
+using namespace robodog_nmpc;
+
+NmpcSolver mpc;
+if (mpc.initialize(config_path) != Status::Ok) {   // e.g. <install>/share/robodog_nmpc/config/config.yaml
+  std::cerr << mpc.errorMessage() << std::endl;    // lists every problem found in config.yaml
+  return;
+}
+
+// every control cycle (horizon.dt = 25 ms):
+State x;                                           // measured body state (world frame)
+Command cmd{0.5, 0.0, 0.3};                        // v_x, v_y [m/s], yaw rate [rad/s] in the heading frame
+std::vector<Contact> schedule(mpc.horizonLength(), Contact{true, false, false, true});  // true = stance
+FootPositions feet;                                // current foot positions (world frame)
+const Status status = mpc.run(x, cmd, schedule, feet);
+const Solution& sol = mpc.getSolution();           // sol.forces[0..3]: FR, FL, RR, RL, world frame [N]
+```
+
+`run()` comes in three forms:
+
+| Form | Contact | Foot positions |
+|---|---|---|
+| `run(x, cmd, contact, feet)` | 4 flags, held over the horizon | current, held |
+| `run(x, cmd, schedule, feet)` | schedule over the N intervals | current; footholds of later touchdowns are predicted (Raibert heuristic, paper Eq. 33) |
+| `run(x, cmd, schedule, foot_plan)` | schedule over the N intervals | given for all N + 1 nodes |
+
+**Conventions.** World frame with z up; state `rpy` (Z-Y-X Euler, `R = Rz Ry Rx`), CoM `position`, `angular_velocity`
+and `linear_velocity`, all in the world frame. Commands in the robot's heading frame (x forward, y left). Foot
+order everywhere FR, FL, RR, RL. Output forces in the world frame, acting on the robot; swing feet get exactly 0.
+
+**Errors.** No exceptions leave the class. `initialize()` returns `InvalidConfig` (with every problem listed) or
+`SolverMismatch` when a `[codegen]` value in `config.yaml` differs from the compiled-in solver (it lists the
+differences: regenerate the solver and rebuild). `run()` returns `Ok`, `InvalidInput` (NaN/Inf, wrong sizes;
+nothing solved) or `SolverFailed`; in the last two cases the forces are the next step of the previous plan with
+the feet now in swing set to 0. `Solution` also holds the acados status, QP iterations, solve time and the
+predicted trajectory (`predicted_states`, `predicted_forces`).
+
+**Real time.** `run()` does not allocate memory, read files or throw. One instance is not thread-safe: use one
+per control thread.
+
+### Tests
+
+`colcon test` runs 45 GoogleTests: config validation (the same cases as the Python validator), the stale-solver
+check, `initialize()`/`run()` paths and error handling, force limits (swing feet exactly 0, friction, `f_min`/`f_max`),
+foothold prediction against hand-computed values, a closed-loop walk (velocity and yaw-rate tracking, timing) and a
+step-by-step comparison with the acados Python interface (`test/reference/closed_loop.txt`: bit-identical forces).
+
+### Performance
+
+Closed-loop walk (`Run.ClosedLoopTrackingAndTiming`, 400 steps, WSL2 desktop): median **1.3 ms** per `run()`,
+99th percentile ≈ 20 ms, max ≈ 22 ms. The slow steps are the few QPs that reach the iteration limit
+(`solver.qp_solver_iter_max`) at contact switches.
 
 ## Showcase animation
 
@@ -131,19 +230,10 @@ cd ../../.. && ~/.venvs/robodog/bin/python showcase/render_3d.py            # wr
 - SRBD model derived step by step (SymPy), verified against the paper, three errata documented
 - Nonlinear MPC in CasADi + acados: SQP-RTI, contact schedule over the horizon, 16-gon friction cone
 - Closed-loop validation in simulation: velocity and yaw-rate tracking, median solve time ≈ 1.5 ms
-
-### Next: C++ and ROS 2 package
-- **Code generation script** that builds the acados solver from a single `config.yaml`
-  (mass, inertia, μ, cost weights, horizon N and dt, solver options), and documents which settings
-  are fixed at code generation (N, friction model) and which can change at runtime
-- **ROS 2 (Humble) C++ package** with a standalone solver class wrapping the generated acados C code:
-  - `initialize()`: load `config.yaml`, create the solver
-  - `run()`: inputs are the measured state, the commanded `v_x`, `v_y`, yaw rate, the contact schedule
-    over the horizon (N × 4) and the foot positions; one SQP-RTI iteration with warm start
-  - `getSolution()`: the optimal 3D ground reaction force of each foot (plus the predicted trajectory)
-- CMake integration of acados and the generated code; build with `colcon`
-- Unit tests: the C++ solver reproduces the Python results (standing, trot, turn)
-- Written formulation document (model, OCP, friction approximation)
+- Validated `config.yaml` and solver code generation; `[codegen]` / `[runtime]` settings, stale-solver check
+- ROS 2 C++ package: `NmpcSolver` with `initialize()`, `run()` (three input forms), `getSolution()`;
+  45 GoogleTests, bit-identical to the Python solver
+- Written formulation ([docs/formulation.md](docs/formulation.md))
 
 ### Then: towards real hardware
 - **Whole-body integration**: map the forces to joint torques `τ = Jᵀ Rᵀ f` (paper Eq. 4), with a
@@ -157,6 +247,7 @@ cd ../../.. && ~/.venvs/robodog/bin/python showcase/render_3d.py            # wr
 
 ### Further improvements
 - Exact friction cone with fast convergence (exact Hessian or a better initial guess for SQP)
-- QP solver settings (iteration limit, warm start) to remove the few slow solves at gait/command changes
+- QP solver settings (iteration limit, warm start) to remove the few slow solves at contact switches
+  (worst case ≈ 22 ms, close to the 25 ms control period)
 - Orientation without Euler angles (rotation matrix / quaternion) for aggressive maneuvers
 - Foothold optimization inside the MPC and other gaits (pace, bound, gallop)

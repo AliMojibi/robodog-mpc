@@ -1,6 +1,7 @@
 # ROS 2 package design: `robodog_nmpc`
 
-Status: **proposal for review** — nothing in this document is implemented in C++ yet.
+Status: **implemented.** This document was the design proposal; it now records the decisions (section 10) and
+the design as built. Usage is described in the README; the mathematics in [formulation.md](formulation.md).
 
 The package turns the NMPC developed in `robodog_nmpc/scripts/` into a reusable C++ library that other ROS 2
 packages (e.g. a locomotion controller) can link against. It contains **no ROS node, no topics, no services**:
