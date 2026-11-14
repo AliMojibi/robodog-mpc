@@ -61,6 +61,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 # not be found. The older DT_RPATH is also searched for the dependencies of the libraries we load.
 # (DT_RPATH takes priority over LD_LIBRARY_PATH: the acados the code was generated for is always used.)
 target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--disable-new-dtags")
+# Link time of programs using this library (our tests, other packages): the linker also resolves the
+# dependencies of libacados.so, which it cannot find without LD_LIBRARY_PATH. INTERFACE: exported with the target.
+target_link_options(${PROJECT_NAME} INTERFACE "LINKER:-rpath-link,${ACADOS_DIR}/lib")
 target_compile_options(${PROJECT_NAME} PRIVATE    # warnings for our C++ code only, not the generated C code
   "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>")
 # Our headers are public and use Eigen (PUBLIC); acados and yaml-cpp are PRIVATE: users never see their types.
